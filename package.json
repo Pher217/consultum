@@ -1,0 +1,15 @@
+{
+  "name": "askup",
+  "version": "0.0.0",
+  "description": "An advisory channel for delegated AI workers — escalate a curated problem to a stronger model when a cheap worker gets stuck.",
+  "type": "module",
+  "bin": { "askup": "bin/askup.js" },
+  "scripts": {
+    "test": "node --test",
+    "lint": "echo \"lint TBD\""
+  },
+  "keywords": ["llm", "advisory", "escalation", "multi-model", "orchestration", "ollama", "codex", "anthropic"],
+  "license": "MIT",
+  "author": "Pher217",
+  "engines": { "node": ">=20" }
+}
