@@ -7,7 +7,8 @@ dist/
 # never commit credentials/tokens
 *oauth-token*
 *.credentials.json
-.counsel.yaml
-counsel.local.yaml
 askup.local.yaml
+/askup.yaml
 coverage/
+# Claude Code worktrees (parallel session isolation)
+.claude/worktrees/

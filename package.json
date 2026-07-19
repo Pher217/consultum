@@ -1,15 +1,23 @@
 {
   "name": "askup",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "An advisory channel for delegated AI workers — escalate a curated problem to a stronger model when a cheap worker gets stuck.",
   "type": "module",
   "bin": { "askup": "bin/askup.js" },
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["bin", "src", "shim", "config.example.yaml", "README.md", "LICENSE", "SECURITY.md", "docs"],
   "scripts": {
     "test": "node --test",
-    "lint": "echo \"lint TBD\""
+    "lint": "node --check bin/askup.js && for f in src/*.js src/providers/*.js; do node --check \"$f\"; done"
   },
   "keywords": ["llm", "advisory", "escalation", "multi-model", "orchestration", "ollama", "codex", "anthropic"],
   "license": "MIT",
   "author": "Pher217",
-  "engines": { "node": ">=20" }
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "yaml": "^2.5.0"
+  }
 }

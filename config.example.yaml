@@ -1,0 +1,13 @@
+# askup — minimal working config. Secrets live in env vars, never here.
+# trust: local | trusted | untrusted   (a sensitive request uses trusted/local only)
+models:
+  opus:  { provider: anthropic-cli, id: claude-opus-4-8, trust: trusted }   # subscription token or ANTHROPIC_API_KEY
+  gpt:   { provider: openai,        id: gpt-4o,          trust: untrusted } # request-shaped; OPENAI_API_KEY
+  local: { provider: ollama,        id: gemma3:27b,      trust: local }     # localhost, no key
+roles:
+  advisor: [opus, gpt]        # ordered fallback chain — first reachable wins
+  # curator: local            # optional; omit to use the deterministic template builder
+policy:
+  default_sensitive: false    # sensitive => only trusted/local advisors are eligible
+# NOTE: the `codex-cli` adapter also exists, but `codex exec -s read-only` is a READ-CAPABLE agent,
+# not a no-tools advisor — prefer `openai` above for a request-shaped OpenAI advisor. See docs/threat-model.md.

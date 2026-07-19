@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # No live provider keys: the redaction regression, adapter contract tests, and e2e run
+      # entirely against injected fakes. Secrets never touch CI.
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
