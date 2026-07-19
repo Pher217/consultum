@@ -198,6 +198,32 @@ test('runInit --print emits a starter config without writing', () => {
   assert.match(out.text(), /models:/);
 });
 
+test('runInit --sandbox writes OUTSIDE the workspace (XDG), not ./askup.yaml (Fable finding 1)', () => {
+  const prev = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = '/tmp/askup-xdgtest';
+  try {
+    let written = null;
+    let mkdirp = null;
+    const code = runInit({
+      flags: { sandbox: true },
+      out: sink().fn,
+      err: sink().fn,
+      detect: () => ({}),
+      exists: () => false,
+      writeFile: (p) => { written = p; },
+      mkdir: (p) => { mkdirp = p; },
+      cwd: '/work',
+    });
+    assert.equal(code, 0);
+    assert.match(written, /\/tmp\/askup-xdgtest\/askup\/config\.yaml$/);
+    assert.doesNotMatch(written, /\/work\//);
+    assert.match(mkdirp, /\/tmp\/askup-xdgtest\/askup$/);
+  } finally {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = prev;
+  }
+});
+
 test('runInit refuses to overwrite an existing config without --force', () => {
   const err = sink();
   const code = runInit({ flags: {}, out: sink().fn, err: err.fn, detect: () => ({ ollama: true }), exists: () => true, writeFile: () => { throw new Error('should not write'); }, cwd: '/tmp' });

@@ -14,6 +14,8 @@ const MAX_CREDENTIAL_BYTES = 4096;
 // Read a credential from a file with the shape gate. Throws USAGE (a loud config error) on any
 // violation — never returns a value that failed a check.
 export function readCredentialFile(filePath, configDir, label = 'credential') {
+  // Relative paths resolve against the CONFIG file's directory (stamped by loadConfig). In library
+  // mode with no config file, configDir is null and paths resolve against cwd — trusted-caller only.
   const abs = path.isAbsolute(filePath) ? filePath : path.resolve(configDir || process.cwd(), filePath);
   let stat;
   try {

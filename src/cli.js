@@ -3,6 +3,7 @@
 // (§18/A6). Exit codes are the machine-readable failure semantics from errors.js.
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { consult } from './consult.js';
 import { loadConfig, discoverConfigPath, resolveAdvisorChain, resolveCurator } from './config.js';
@@ -214,18 +215,24 @@ export async function runDoctor({ flags, config, out, err, probe = defaultProbe 
   return EXIT.OK;
 }
 
-export function runInit({ flags, out, err, detect = defaultDetect, cwd = process.cwd(), writeFile = fs.writeFileSync, exists = fs.existsSync }) {
+export function runInit({ flags, out, err, detect = defaultDetect, cwd = process.cwd(), writeFile = fs.writeFileSync, exists = fs.existsSync, mkdir = fs.mkdirSync }) {
   const detected = detect();
   const content = generateStarterConfig(detected, { sandbox: Boolean(flags.sandbox) });
   if (flags.print) {
     out(content);
     return EXIT.OK;
   }
-  const target = flags.config ?? path.join(cwd, 'askup.yaml');
+  // The sandbox preset must NOT default into the worker-writable cwd (threat-model A7). Default it to
+  // the user config dir instead; a non-sandbox init still uses ./askup.yaml.
+  const defaultTarget = flags.sandbox
+    ? path.join(xdgConfigHome(), 'askup', 'config.yaml')
+    : path.join(cwd, 'askup.yaml');
+  const target = flags.config ?? defaultTarget;
   if (exists(target) && !flags.force) {
     err(`askup init: ${target} already exists. Use --force to overwrite, or --print to preview.`);
     return EXIT.USAGE;
   }
+  mkdir(path.dirname(target), { recursive: true }); // create ~/.config/askup etc. so the write succeeds
   writeFile(target, content, 'utf8');
   out(`wrote ${target}`);
   if (flags.sandbox) {
@@ -363,7 +370,11 @@ async function httpAuthedStatus(model, base, envName, reachPath) {
 function cliStatus(cmd, model, tokenEnv) {
   if (!onPath(cmd)) return { status: 'not-on-path', detail: `${cmd} not on PATH` };
   const cred = tokenEnv && (process.env[tokenEnv] || credentialPresent(model, tokenEnv));
-  return { status: 'ok', detail: cred ? 'on PATH, token present' : 'on PATH (auth via the tool’s own login if no token_file)' };
+  return { status: 'ok', detail: cred ? 'on PATH, token present' : "on PATH (auth via the tool's own login if no token_file)" };
+}
+
+function xdgConfigHome() {
+  return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
 }
 
 function onPath(cmd) {
