@@ -128,8 +128,8 @@ test('e2e: malformed advisor output is retried once, then parses', async () => {
 
 test('e2e: whole chain unreachable throws provider-error (exit 12)', async () => {
   const d = deps({
-    httpPostJson: async () => { throw new Error('down'); },
-    runNoStdin: async () => ({ code: 1, stdout: '', stderr: 'boom', timedOut: false }),
+    httpPostJson: async () => { throw new Error('down'); }, // adv (ollama) down
+    runWithStdin: async () => ({ code: 1, stdout: '', stderr: 'boom', timedOut: false }), // sol (codex) fails
   });
   await assert.rejects(() => consult({ question: 'q', config: CFG, deps: d }), (e) => e.kind === 'provider-error' && e.exitCode === 12);
 });
@@ -186,7 +186,23 @@ policy:
   await consult({ question: 'same q', context: 'same ctx', config: cfg, deps: deps(), taskId: 'T2', state });
   await assert.rejects(
     () => consult({ question: 'same q', context: 'same ctx', config: cfg, deps: deps(), taskId: 'T2', state }),
-    (e) => e.kind === 'limit-exceeded' && /near-identical/.test(e.message),
+    (e) => e.kind === 'limit-exceeded' && /identical content/.test(e.message),
+  );
+});
+
+test('e2e: a sourcePath matching sensitive_paths forces sensitive and refuses an untrusted-only chain', async () => {
+  // Regression for Sol finding 2: per-path sensitivity must actually take effect end-to-end.
+  const cfg = parseConfig(`
+models:
+  sol: { provider: codex-cli, id: sol-model, trust: untrusted }
+roles:
+  advisor: [sol]
+policy:
+  sensitive_paths: ["**/secrets/**"]
+`);
+  await assert.rejects(
+    () => consult({ question: 'q', context: 'c', sourcePath: 'app/secrets/key.txt', config: cfg, deps: deps() }),
+    (e) => e.kind === 'refused-by-policy',
   );
 });
 

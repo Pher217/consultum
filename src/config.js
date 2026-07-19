@@ -130,17 +130,58 @@ function normalizeConfig(raw, filename) {
   }
 
   const policy = { ...POLICY_DEFAULTS };
-  if (raw.policy && typeof raw.policy === 'object' && !Array.isArray(raw.policy)) {
-    for (const key of Object.keys(POLICY_DEFAULTS)) {
-      if (raw.policy[key] !== undefined) policy[key] = raw.policy[key];
+  if (raw.policy !== undefined) {
+    if (typeof raw.policy !== 'object' || raw.policy === null || Array.isArray(raw.policy)) {
+      throw new AskupError(KIND.USAGE, `config ${filename}: 'policy' must be a mapping`);
     }
-  }
-  if (!Array.isArray(policy.sensitive_paths)) {
-    throw new AskupError(KIND.USAGE, `config ${filename}: policy.sensitive_paths must be a list`);
+    for (const key of Object.keys(POLICY_DEFAULTS)) {
+      if (raw.policy[key] !== undefined) policy[key] = validatePolicyValue(key, raw.policy[key], filename);
+    }
   }
 
   return { models, roles: { advisor: advisorNames, curator: curatorName }, policy };
 }
+
+// Strict policy validation. A mistyped policy value must be a config error, never silently coerced —
+// e.g. `default_sensitive: "true"` (a string) would otherwise be truthy in config but fail the
+// `=== true` check in isSensitive(), leaving an untrusted advisor eligible (a fail-open). Reported by
+// the Sol review.
+const BOOL_POLICY = new Set(['default_sensitive', 'curate']);
+const INT_POLICY = {
+  panel_threshold: [0, 100],
+  max_consults_per_task: [1, Number.MAX_SAFE_INTEGER],
+  min_attempts_before_debug_consult: [0, Number.MAX_SAFE_INTEGER],
+};
+
+function validatePolicyValue(key, value, filename) {
+  if (BOOL_POLICY.has(key)) {
+    if (typeof value !== 'boolean') {
+      throw new AskupError(KIND.USAGE, `config ${filename}: policy.${key} must be a boolean, got ${JSON.stringify(value)}`);
+    }
+    return value;
+  }
+  if (key in INT_POLICY) {
+    if (typeof value !== 'number' || !Number.isInteger(value)) {
+      throw new AskupError(KIND.USAGE, `config ${filename}: policy.${key} must be an integer, got ${JSON.stringify(value)}`);
+    }
+    const [min, max] = INT_POLICY[key];
+    if (value < min || value > max) {
+      throw new AskupError(KIND.USAGE, `config ${filename}: policy.${key} must be in [${min}, ${max}], got ${value}`);
+    }
+    return value;
+  }
+  // sensitive_paths
+  if (!Array.isArray(value) || !value.every((v) => typeof v === 'string')) {
+    throw new AskupError(KIND.USAGE, `config ${filename}: policy.sensitive_paths must be a list of strings`);
+  }
+  return value;
+}
+
+// Only these read-only filesystem tools may ever be opted into. Shell/network/mutating tools (Bash,
+// Write, Edit, WebFetch, WebSearch, …) are rejected outright — granting Bash would make the directory
+// scope meaningless (Sol review, finding 4). Even these read tools do NOT constitute a security
+// boundary (an advisor with Read can disclose files); they are an explicit, narrow opt-in.
+const ALLOWED_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 
 function normalizeTools(tools, name, filename) {
   if (tools === undefined || tools === null) return null;
@@ -149,6 +190,14 @@ function normalizeTools(tools, name, filename) {
   }
   const allow = Array.isArray(tools.allow) ? tools.allow.map(String) : [];
   const dirs = Array.isArray(tools.dirs) ? tools.dirs.map(String) : [];
+  for (const t of allow) {
+    if (!ALLOWED_TOOLS.has(t)) {
+      throw new AskupError(
+        KIND.USAGE,
+        `config ${filename}: model '${name}' tool '${t}' is not permitted — only read-only filesystem tools (${[...ALLOWED_TOOLS].join(', ')}) may be granted`,
+      );
+    }
+  }
   if (allow.length > 0 && dirs.length === 0) {
     // Fable §18: filesystem tools are opt-in AND directory-scoped. Refuse tools without a scope.
     throw new AskupError(
@@ -209,21 +258,29 @@ export function isSensitive(config, { flagSensitive = false, sourcePath = null }
 }
 
 function matchesSensitivePath(globs, sourcePath) {
-  return globs.some((g) => globToRegExp(g).test(sourcePath));
+  // Normalize Windows separators and a leading ./ so patterns behave the same cross-platform (Sol #8).
+  const norm = String(sourcePath).replace(/\\/g, '/').replace(/^\.\//, '');
+  return globs.some((g) => globToRegExp(g).test(norm));
 }
 
-// Minimal glob: * matches any run of non-slash chars, ** matches across slashes. Anchored full-match.
+// Minimal glob: `*` matches a run of non-slash chars; `**/` matches zero or more path segments (so
+// `**/secrets/**` matches both `secrets/x` at the root AND `a/b/secrets/x`); a trailing `**` matches
+// anything. Anchored full-match.
 function globToRegExp(glob) {
+  const g = glob.replace(/\\/g, '/');
   let re = '^';
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    if (c === '*') {
-      if (glob[i + 1] === '*') {
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i];
+    if (c === '*' && g[i + 1] === '*') {
+      if (g[i + 2] === '/') {
+        re += '(?:[^/]*/)*'; // zero or more leading segments, including none
+        i += 2;
+      } else {
         re += '.*';
         i++;
-      } else {
-        re += '[^/]*';
       }
+    } else if (c === '*') {
+      re += '[^/]*';
     } else {
       re += c.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
     }

@@ -31,8 +31,15 @@ assumptions as facts, exfiltrate a secret, or embed instructions for the next ho
 An advisor with filesystem tools, reached through an injected packet, reads local secrets and
 echoes them in its recommendation.
 - **Mitigation:** the advisor runs **with no tools by default** — the packet is its entire
-  world. Filesystem tools are opt-in and **directory-scoped**. "Read-only" prevents mutation,
-  not disclosure — it is not treated as a safety property.
+  world. Filesystem tools are opt-in, **directory-scoped**, and restricted to read-only tools
+  (`Read`/`Grep`/`Glob`); shell/network tools are rejected by config validation. "Read-only" prevents
+  mutation, not disclosure — it is not treated as a safety property.
+- **Adapter caveat:** `codex-cli` (`codex exec -s read-only`) is a **read-capable agent**, not a
+  no-tools advisor — it can autonomously read files in its working directory. Do not place it first
+  in an untrusted advisor chain, and never use it for sensitive data. Prefer the `openai` adapter
+  (genuine request-shaped, no tools) for an OpenAI advisor. Even the opt-in `anthropic-cli` tools use
+  `--add-dir`, which *adds* directories without removing the process's own cwd — run askup from a
+  directory with no secrets when enabling tools.
 
 ### A3 — RCE via the returned recommendation
 A poisoned recommendation ("run `curl … | sh`") is executed by a weak executor sitting in a
@@ -67,7 +74,7 @@ credential.
 | A3 RCE via recommendation | Advisor output schema-validated (parse contract) + linted for shell/network commands | `src/recommendation.js`; asserted in `test/recommendation.test.js` |
 | A4 redaction bypass | Redact twice (raw input + curated output); sensitive routing keeps third parties out entirely | `src/redact.js` (10-case regression), `src/consult.js` |
 | A5 fail-open sensitivity | Sensitivity is config-level (`default_sensitive` + per-path); `--sensitive` only escalates | `src/config.js` (`isSensitive`); refusal in `consult.js`; asserted in `test/consult.test.js` |
-| A6 argv/cred leak | Question + context via stdin (CLI + `runWithStdin`); tokens by path/env, gitignored | `bin/askup.js`, `src/run.js`; `codex-cli` argv exposure is the documented residual |
+| A6 argv/cred leak | Question + context via stdin (CLI + `runWithStdin`); every CLI adapter feeds its prompt on stdin, incl. `codex exec -`; tokens by path/env, gitignored | `bin/askup.js`, `src/run.js`, `src/providers/{anthropic,codex}-cli.js` |
 
 Fail-closed refusal (a sensitive request with no trusted/local advisor) returns exit code `11`
 (`refused-by-policy`) and never downgrades to a third party — see `test/consult.test.js`.

@@ -41,6 +41,7 @@ export function parseArgs(argv) {
     else if (a === '--print') flags.print = true;
     else if (a === '--force') flags.force = true;
     else if (a === '--task-id') flags.taskId = rest[++i];
+    else if (a === '--source-path') flags.sourcePath = rest[++i];
     else if (a === '--config') flags.config = rest[++i];
     else if (a === '--help' || a === '-h') flags.help = true;
     else flags._.push(a);
@@ -50,18 +51,22 @@ export function parseArgs(argv) {
 
 export function parseStdin(raw) {
   const text = (raw ?? '').trim();
-  if (!text) return { question: '', context: '' };
+  if (!text) return { question: '', context: '', sourcePath: null };
   if (text.startsWith('{')) {
     try {
       const obj = JSON.parse(text);
-      return { question: String(obj.question ?? '').trim(), context: String(obj.context ?? '').trim() };
+      return {
+        question: String(obj.question ?? '').trim(),
+        context: String(obj.context ?? '').trim(),
+        sourcePath: obj.sourcePath ? String(obj.sourcePath) : null,
+      };
     } catch {
       // fall through to line-based parsing
     }
   }
   const nl = text.indexOf('\n');
-  if (nl === -1) return { question: text, context: '' };
-  return { question: text.slice(0, nl).trim(), context: text.slice(nl + 1).trim() };
+  if (nl === -1) return { question: text, context: '', sourcePath: null };
+  return { question: text.slice(0, nl).trim(), context: text.slice(nl + 1).trim(), sourcePath: null };
 }
 
 // ---- human formatting ------------------------------------------------------
@@ -103,7 +108,10 @@ export function formatHuman(rec) {
 // ---- commands --------------------------------------------------------------
 
 export async function runConsult({ stdin, flags, config, deps = defaultRuntime, out, err }) {
-  const { question, context } = parseStdin(stdin);
+  const { question, context, sourcePath: stdinSourcePath } = parseStdin(stdin);
+  // --source-path (host-supplied) wins; a JSON stdin sourcePath is a fallback. Either way sensitivity
+  // is escalate-only, so a caller-provided path can only ADD sensitivity, never relax it.
+  const sourcePath = flags.sourcePath ?? stdinSourcePath ?? null;
   if (!question) {
     err(`askup consult: no question on stdin.\n\n${USAGE}`);
     return EXIT.USAGE;
@@ -128,6 +136,7 @@ export async function runConsult({ stdin, flags, config, deps = defaultRuntime, 
       question,
       context,
       sensitive: Boolean(flags.sensitive),
+      sourcePath,
       curate: flags.curate,
       config: cfg,
       deps,
@@ -212,7 +221,7 @@ export function generateStarterConfig(detected) {
     advisor.push('opus');
   }
   if (detected.codex) {
-    models.push('  sol:   { provider: codex-cli,     id: gpt-5.6-sol,     trust: untrusted } # ChatGPT subscription');
+    models.push('  sol:   { provider: codex-cli,     id: gpt-5.6-sol,     trust: untrusted } # ChatGPT sub — read-capable agent, NOT no-tools (see docs/threat-model.md)');
     advisor.push('sol');
   }
   if (detected.ollama) {

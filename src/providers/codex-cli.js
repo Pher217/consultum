@@ -1,15 +1,18 @@
-// codex-cli — OpenAI models through the ChatGPT-subscription `codex` CLI. The most battle-tested,
-// most differentiated adapter: it ships the exact invocation fix that took real debugging.
+// codex-cli — OpenAI models through the ChatGPT-subscription `codex` CLI.
 //
-// codex `exec` needs THREE things or it hangs / returns empty:
-//   1. `--skip-git-repo-check`  — to run outside a trusted git dir
-//   2. `-s read-only`           — request-shaped, no mutation (still not a disclosure guarantee)
-//   3. a REAL /dev/null stdin   — a pipe (e.g. an empty-string input) makes codex print
-//                                 "Reading additional input from stdin..." and hang; it needs an
-//                                 EOF'd stdin to use the arg prompt. Handled by runNoStdin().
+// IMPORTANT SECURITY CAVEAT (Sol review, finding 1): `codex exec -s read-only` is NOT a no-tools
+// mode. `read-only` sandboxes *writes*; the agent can still autonomously run read commands and read
+// files from its working directory (`.env`, `~/.aws/credentials`, repo secrets). An injected packet
+// can therefore ask it to read a local secret and echo it back. This adapter is a READ-CAPABLE AGENT,
+// not the request-shaped no-tools advisor the security model wants by default. Treat it accordingly:
+//   - do NOT put it first in a default advisor chain aimed at untrusted input;
+//   - never use it for sensitive data (it is third-party AND can read the local FS);
+//   - prefer the `openai` adapter (genuine no-tools request) for a request-shaped OpenAI advisor.
+// See docs/threat-model.md (A2) and docs/adding-a-provider.md.
 //
-// Residual (documented, threat-model A6): codex has no stdin-prompt mode, so the prompt is passed on
-// argv and is visible to `ps` for the lifetime of the call. Do not send secrets; redaction runs first.
+// Invocation: the prompt is fed on STDIN via `codex exec -` (supported — "if `-` is used,
+// instructions are read from stdin"), so the packet no longer sits on argv (A6). `--skip-git-repo-
+// check` lets it run outside a trusted git dir.
 
 import { AskupError, KIND } from '../errors.js';
 
@@ -21,19 +24,19 @@ export function create(model, deps) {
     model,
     async invoke(prompt, { timeoutMs = model.timeoutMs || DEFAULT_TIMEOUT_MS, system } = {}) {
       const full = system ? `${system}\n\n${prompt}` : prompt;
-      const res = await deps.runNoStdin(
+      const res = await deps.runWithStdin(
         'codex',
-        ['exec', '--skip-git-repo-check', '-s', 'read-only', '-m', model.id, full],
-        { timeoutMs },
+        ['exec', '--skip-git-repo-check', '-s', 'read-only', '-m', model.id, '-'],
+        { timeoutMs, input: full },
       );
       if (res.timedOut) throw new AskupError(KIND.PROVIDER_ERROR, `codex (${model.id}) timed out after ${timeoutMs}ms`);
-      const text = (res.stdout || '').trim();
-      if (!text) {
-        throw new AskupError(
-          KIND.PROVIDER_ERROR,
-          `codex (${model.id}) returned no output (exit ${res.code}): ${(res.stderr || '').trim().slice(-200)}`,
-        );
+      // Reject a non-zero exit BEFORE trusting stdout — a failed process can emit partial output that
+      // would otherwise be accepted instead of falling through to the next advisor (Sol finding 7).
+      if (res.code !== 0) {
+        throw new AskupError(KIND.PROVIDER_ERROR, `codex (${model.id}) exited ${res.code}: ${(res.stderr || '').trim().slice(-200)}`);
       }
+      const text = (res.stdout || '').trim();
+      if (!text) throw new AskupError(KIND.PROVIDER_ERROR, `codex (${model.id}) returned no output`);
       return { text };
     },
   };

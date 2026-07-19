@@ -35,13 +35,16 @@ export const TOOL_SCHEMA = {
   },
 };
 
-// args: { question, packet | context, sensitive? }. opts: { config, deps, taskId, state, curate }.
+// args: { question, packet | context, sensitive? } (model-facing). opts: { config, deps, taskId,
+// state, curate, sourcePath }. sourcePath belongs in OPTS, not args: it is trusted host-side
+// sensitivity metadata that the integrator supplies, not something the weak worker sets (Sol finding 2).
 export async function askupTool(args = {}, opts = {}) {
   try {
     const rec = await consult({
       question: args.question,
       context: args.packet ?? args.context ?? '',
       sensitive: Boolean(args.sensitive),
+      sourcePath: opts.sourcePath ?? null,
       curate: opts.curate,
       config: opts.config,
       deps: opts.deps,

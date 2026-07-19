@@ -72,25 +72,35 @@ test('anthropic-cli: a stall (timedOut) fails fast with provider-error', async (
   await assert.rejects(() => p.invoke('q'), (e) => e.kind === 'provider-error' && /timed out/.test(e.message));
 });
 
+test('anthropic-cli: non-zero exit with partial stdout is rejected (Sol finding 7)', async () => {
+  const deps = fakeDeps({ withStdin: () => ({ code: 2, stdout: 'partial', stderr: 'fatal', timedOut: false }) });
+  const p = createProvider(model({ provider: 'anthropic-cli', id: 'c' }), deps);
+  await assert.rejects(() => p.invoke('q'), (e) => e.kind === 'provider-error' && /exited 2/.test(e.message));
+});
+
 // ---- codex-cli -------------------------------------------------------------
 
-test('codex-cli: uses read-only + skip-git-repo-check + /dev/null stdin, no tools', async () => {
+test('codex-cli: prompt via stdin (-), read-only + skip-git-repo-check, never on argv', async () => {
   const deps = fakeDeps();
   const p = createProvider(model({ provider: 'codex-cli', id: 'gpt-x' }), deps);
-  const out = await p.invoke('q', { timeoutMs: 1234 });
+  const out = await p.invoke(SENTINEL, { timeoutMs: 1234 });
   assert.equal(out.text, 'advice');
-  const call = deps.calls.runNoStdin[0]; // /dev/null-stdin path
+  const call = deps.calls.runWithStdin[0]; // prompt fed on stdin, not argv
   assert.equal(call.cmd, 'codex');
-  assert.ok(call.args.includes('--skip-git-repo-check'));
-  assert.deepEqual(call.args.slice(0, 5), ['exec', '--skip-git-repo-check', '-s', 'read-only', '-m']);
+  assert.equal(call.opts.input, SENTINEL);
+  assert.ok(!call.args.join(' ').includes(SENTINEL), 'prompt must not be on argv');
+  assert.deepEqual(call.args, ['exec', '--skip-git-repo-check', '-s', 'read-only', '-m', 'gpt-x', '-']);
   assert.equal(call.opts.timeoutMs, 1234);
 });
 
-test('codex-cli: empty output and stall both error', async () => {
-  const empty = createProvider(model({ provider: 'codex-cli', id: 'g' }), fakeDeps({ noStdin: () => ({ code: 0, stdout: '', stderr: 'x', timedOut: false }) }));
+test('codex-cli: empty output, stall, and non-zero exit all error', async () => {
+  const empty = createProvider(model({ provider: 'codex-cli', id: 'g' }), fakeDeps({ withStdin: () => ({ code: 0, stdout: '', stderr: 'x', timedOut: false }) }));
   await assert.rejects(() => empty.invoke('q'), (e) => e.kind === 'provider-error');
-  const stall = createProvider(model({ provider: 'codex-cli', id: 'g' }), fakeDeps({ noStdin: () => ({ code: -1, stdout: '', stderr: '', timedOut: true }) }));
+  const stall = createProvider(model({ provider: 'codex-cli', id: 'g' }), fakeDeps({ withStdin: () => ({ code: -1, stdout: '', stderr: '', timedOut: true }) }));
   await assert.rejects(() => stall.invoke('q'), (e) => /timed out/.test(e.message));
+  // non-zero exit with partial stdout must NOT be accepted (Sol finding 7)
+  const failed = createProvider(model({ provider: 'codex-cli', id: 'g' }), fakeDeps({ withStdin: () => ({ code: 1, stdout: 'partial advice', stderr: 'fatal', timedOut: false }) }));
+  await assert.rejects(() => failed.invoke('q'), (e) => e.kind === 'provider-error' && /exited 1/.test(e.message));
 });
 
 // ---- ollama ----------------------------------------------------------------

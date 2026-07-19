@@ -71,6 +71,36 @@ test('tools with allow + dirs are accepted', () => {
   assert.deepEqual(c.models.o.tools, { allow: ['Read'], dirs: ['./ctx'] });
 });
 
+test('tools reject shell/network names (only read-only fs tools may be granted)', () => {
+  for (const bad of ['Bash', 'Write', 'Edit', 'WebFetch', 'WebSearch']) {
+    const cfg = `models:\n  o: { provider: anthropic-cli, id: x, trust: trusted, tools: { allow: [${bad}], dirs: [./ctx] } }\nroles:\n  advisor: o\n`;
+    assert.throws(() => parseConfig(cfg), (e) => e.kind === 'usage' && /not permitted/.test(e.message), `expected ${bad} to be rejected`);
+  }
+});
+
+test('policy: a mistyped default_sensitive (string) is a config error, not a silent fail-open', () => {
+  // Regression for Sol finding 3: "true" (string) must NOT be accepted and resolve as non-sensitive.
+  assert.throws(
+    () => parseConfig(`models:\n  o: { provider: anthropic-cli, id: x, trust: trusted }\nroles:\n  advisor: o\npolicy:\n  default_sensitive: "true"\n`),
+    (e) => e.kind === 'usage' && /default_sensitive must be a boolean/.test(e.message),
+  );
+});
+
+test('policy: numeric fields are range-validated', () => {
+  const base = 'models:\n  o: { provider: anthropic-cli, id: x, trust: trusted }\nroles:\n  advisor: o\npolicy:\n';
+  assert.throws(() => parseConfig(base + '  panel_threshold: 200\n'), /panel_threshold must be in/);
+  assert.throws(() => parseConfig(base + '  max_consults_per_task: 0\n'), /max_consults_per_task must be in/);
+  assert.throws(() => parseConfig(base + '  panel_threshold: "70"\n'), /panel_threshold must be an integer/);
+});
+
+test('sensitive_paths glob matches at the root and across segments, and normalizes backslashes', () => {
+  const c = parseConfig(`models:\n  o: { provider: anthropic-cli, id: x, trust: trusted }\nroles:\n  advisor: o\npolicy:\n  sensitive_paths: ["**/secrets/**"]\n`);
+  assert.equal(isSensitive(c, { sourcePath: 'secrets/db.txt' }), true); // root (Sol finding 8)
+  assert.equal(isSensitive(c, { sourcePath: 'a/b/secrets/db.txt' }), true); // nested
+  assert.equal(isSensitive(c, { sourcePath: 'app\\secrets\\db.txt' }), true); // windows separators
+  assert.equal(isSensitive(c, { sourcePath: 'app/main.js' }), false);
+});
+
 test('discoverConfigPath honors ASKUP_CONFIG over cwd', () => {
   const dir = tmpdir();
   const explicit = path.join(dir, 'custom.yaml');

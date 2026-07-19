@@ -18,7 +18,11 @@ export function create(model, deps) {
     async invoke(prompt, { timeoutMs = model.timeoutMs || DEFAULT_TIMEOUT_MS, system } = {}) {
       const args = ['-p', '--model', model.id, '--permission-mode', 'plan'];
       if (model.tools && model.tools.allow.length > 0) {
-        // opt-in, directory-scoped tools — only the configured allowlist, only within the given dirs
+        // Opt-in, directory-scoped read-only tools (config restricts the allowlist to Read/Grep/Glob).
+        // CAVEAT (Sol finding 4): --add-dir ADDS directories; it does not remove the process's own
+        // working directory. Run askup from a directory that holds no secrets when enabling tools —
+        // this is a narrow opt-in, not a sandbox. Even Read here can disclose files; it is not a
+        // security boundary.
         args.push('--tools', model.tools.allow.join(','));
         for (const dir of model.tools.dirs) args.push('--add-dir', dir);
       } else {
@@ -29,6 +33,10 @@ export function create(model, deps) {
       const input = system ? `${system}\n\n${prompt}` : prompt;
       const res = await deps.runWithStdin('claude', args, { timeoutMs, input });
       if (res.timedOut) throw new AskupError(KIND.PROVIDER_ERROR, `claude (${model.id}) timed out after ${timeoutMs}ms`);
+      // Reject a non-zero exit before trusting stdout (Sol finding 7).
+      if (res.code !== 0) {
+        throw new AskupError(KIND.PROVIDER_ERROR, `claude (${model.id}) exited ${res.code}: ${(res.stderr || '').trim().slice(-200)}`);
+      }
       const text = (res.stdout || '').trim();
       if (!text) {
         throw new AskupError(

@@ -52,17 +52,18 @@ test('parseArgs --no-curate sets curate false, --curate sets true', () => {
   assert.equal(parseArgs(['consult', '--curate']).flags.curate, true);
 });
 
-test('parseStdin: JSON form', () => {
-  assert.deepEqual(parseStdin('{"question":"q","context":"c"}'), { question: 'q', context: 'c' });
+test('parseStdin: JSON form (with optional sourcePath)', () => {
+  assert.deepEqual(parseStdin('{"question":"q","context":"c"}'), { question: 'q', context: 'c', sourcePath: null });
+  assert.deepEqual(parseStdin('{"question":"q","context":"c","sourcePath":"a/b.pem"}'), { question: 'q', context: 'c', sourcePath: 'a/b.pem' });
 });
 
 test('parseStdin: first line is question, rest is context', () => {
-  assert.deepEqual(parseStdin('why does it fail?\nline1\nline2'), { question: 'why does it fail?', context: 'line1\nline2' });
+  assert.deepEqual(parseStdin('why does it fail?\nline1\nline2'), { question: 'why does it fail?', context: 'line1\nline2', sourcePath: null });
 });
 
 test('parseStdin: single line and empty', () => {
-  assert.deepEqual(parseStdin('just a question'), { question: 'just a question', context: '' });
-  assert.deepEqual(parseStdin('  '), { question: '', context: '' });
+  assert.deepEqual(parseStdin('just a question'), { question: 'just a question', context: '', sourcePath: null });
+  assert.deepEqual(parseStdin('  '), { question: '', context: '', sourcePath: null });
 });
 
 // ---- consult ---------------------------------------------------------------
@@ -97,6 +98,14 @@ test('runConsult: no question on stdin returns usage exit 10', async () => {
   const code = await runConsult({ stdin: '   ', flags: {}, config: CFG, deps: okDeps(), out: sink().fn, err: err.fn });
   assert.equal(code, 10);
   assert.match(err.text(), /no question on stdin/);
+});
+
+test('runConsult: --source-path matching sensitive_paths forces refuse (exit 11)', async () => {
+  const cfg = parseConfig('models:\n  sol: { provider: codex-cli, id: s, trust: untrusted }\nroles:\n  advisor: [sol]\npolicy:\n  sensitive_paths: ["**/secrets/**"]\n');
+  const err = sink();
+  const code = await runConsult({ stdin: 'q\nc', flags: { sourcePath: 'app/secrets/x' }, config: cfg, deps: okDeps(), out: sink().fn, err: err.fn });
+  assert.equal(code, 11);
+  assert.match(err.text(), /refused-by-policy/);
 });
 
 test('runConsult: sensitive request with only untrusted advisor is refused (exit 11)', async () => {

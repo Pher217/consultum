@@ -26,24 +26,30 @@ function headerToKey(rawHeader) {
   return null;
 }
 
-// Patterns that indicate a runnable shell / network command embedded in advice.
+// Patterns that indicate a runnable shell / network / interpreter command embedded in advice.
 const LINT_PATTERNS = [
   { name: 'curl', re: /\bcurl\b/i },
   { name: 'wget', re: /\bwget\b/i },
-  { name: 'pipe-to-shell', re: /\|\s*(sh|bash|zsh)\b/i },
+  { name: 'pipe-to-shell', re: /\|\s*(sh|bash|zsh|python[0-9.]*|node|perl|ruby)\b/i },
   { name: 'shell-eval', re: /\b(sh|bash|zsh)\s+-c\b/i },
+  { name: 'interpreter-eval', re: /\b(python[0-9.]*\s+-c|node\s+-e|perl\s+-e|ruby\s+-e)\b/i },
   { name: 'eval', re: /\beval\b/i },
   { name: 'rm -rf', re: /\brm\s+-rf\b/i },
+  { name: 'chmod', re: /\bchmod\s+\+x\b/i },
   { name: 'netcat', re: /\bnc\s+-/i },
   { name: 'ssh', re: /\bssh\s+\S/i },
   { name: 'scp', re: /\bscp\s+\S/i },
+  { name: 'base64-decode', re: /\bbase64\s+(-d|--decode)\b/i },
+  { name: 'powershell', re: /\b(powershell|pwsh|iex|Invoke-Expression|iwr|irm|Invoke-WebRequest)\b/i },
   { name: 'command-substitution', re: /\$\([^)]+\)|`[^`]+`/ },
 ];
 
+// Scan EVERY returned field — a command hidden in an unscanned section (e.g. Risks) would otherwise
+// reach the weak executor with no warning (Sol finding 5).
+const SCANNED_FIELDS = ['problem', 'facts', 'assumptions', 'recommendation', 'why', 'implementation', 'alternatives', 'risks', 'validation'];
+
 export function lintGuidance(rec) {
-  const haystack = [rec.implementation, rec.recommendation, rec.why, rec.alternatives, rec.validation]
-    .filter(Boolean)
-    .join('\n');
+  const haystack = SCANNED_FIELDS.map((f) => rec[f]).filter(Boolean).join('\n');
   const warnings = [];
   for (const { name, re } of LINT_PATTERNS) {
     if (re.test(haystack)) warnings.push(`advice contains a possible shell/network command (${name}) — review before running, never pipe to a shell unexamined`);

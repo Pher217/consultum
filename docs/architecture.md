@@ -53,7 +53,7 @@ policy:
 | `anthropic-cli` | file-based OAuth token (`claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`) or `ANTHROPIC_API_KEY` | request-shaped / no tools (default); `--permission-mode plan` + scoped `--tools` only if explicitly enabled |
 | `openai` / `openai-compatible` | `OPENAI_API_KEY` + base URL | request-shaped |
 | `ollama` | none (localhost) / Ollama cloud | request-shaped |
-| `codex-cli` | ChatGPT subscription via `codex` | `-s read-only` + `--skip-git-repo-check` + **real `/dev/null` stdin** (a pipe makes codex hang/empty) |
+| `codex-cli` | ChatGPT subscription via `codex` | `-s read-only` + `--skip-git-repo-check` + prompt on **stdin via `codex exec -`** (keeps it off argv). NOTE: `-s read-only` is a **read-capable agent**, not no-tools — prefer `openai` for a request-shaped OpenAI advisor. |
 
 `anthropic-api` is a thin variant of `anthropic-cli`. Adapters implement one interface —
 `invoke(prompt, {timeoutMs}) -> { text, usage? }` — and fail fast on stall (ported from the
