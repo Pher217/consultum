@@ -25,6 +25,9 @@ export async function adviseWithChain(chain, { prompt, system, timeoutMs, deps, 
     try {
       first = await provider.invoke(prompt, { system, timeoutMs });
     } catch (err) {
+      // A credential/config error (USAGE) is the user's to fix — fail loud, do not silently try the
+      // next advisor with (e.g.) a bad-perms token file.
+      if (err instanceof AskupError && err.kind === KIND.USAGE) throw err;
       providerErrors.push(`${model.name}: ${err.message}`);
       continue; // provider down/stalled/empty → next advisor
     }

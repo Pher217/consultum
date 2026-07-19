@@ -1,6 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createProvider } from '../src/providers/index.js';
+
+function credFile(content) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'askup-p-'));
+  const p = path.join(dir, 'cred');
+  fs.writeFileSync(p, content);
+  if (process.platform !== 'win32') fs.chmodSync(p, 0o600);
+  return p;
+}
 
 // Contract tests run with NO live provider: runtime primitives are injected as fakes that record
 // their calls, so we can assert the security invariants (no tools by default, prompt off argv,
@@ -76,6 +87,43 @@ test('anthropic-cli: non-zero exit with partial stdout is rejected (Sol finding 
   const deps = fakeDeps({ withStdin: () => ({ code: 2, stdout: 'partial', stderr: 'fatal', timedOut: false }) });
   const p = createProvider(model({ provider: 'anthropic-cli', id: 'c' }), deps);
   await assert.rejects(() => p.invoke('q'), (e) => e.kind === 'provider-error' && /exited 2/.test(e.message));
+});
+
+test('anthropic-cli: a token_file is injected into the subprocess env (keychain-free), not the parent', async () => {
+  delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  const tok = credFile('sk-ant-oat-INJECTED\n');
+  const deps = fakeDeps();
+  const p = createProvider(model({ provider: 'anthropic-cli', id: 'c', tokenFile: tok }), deps);
+  await p.invoke('q');
+  assert.equal(deps.calls.runWithStdin[0].opts.env.CLAUDE_CODE_OAUTH_TOKEN, 'sk-ant-oat-INJECTED');
+  assert.equal(process.env.CLAUDE_CODE_OAUTH_TOKEN, undefined, 'must not touch the parent env');
+});
+
+test('anthropic-cli: when the token env var is already set, the file is not injected (child inherits)', async () => {
+  process.env.CLAUDE_CODE_OAUTH_TOKEN = 'ambient';
+  try {
+    const deps = fakeDeps();
+    const p = createProvider(model({ provider: 'anthropic-cli', id: 'c', tokenFile: '/nonexistent' }), deps);
+    await p.invoke('q');
+    assert.equal(deps.calls.runWithStdin[0].opts.env, undefined);
+  } finally {
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  }
+});
+
+test('anthropic-cli: a secret in stderr is redacted before it lands in the error message (C3)', async () => {
+  const deps = fakeDeps({ withStdin: () => ({ code: 1, stdout: '', stderr: 'auth failed OPENAI_API_KEY=sk-abcdefghij1234567890', timedOut: false }) });
+  const p = createProvider(model({ provider: 'anthropic-cli', id: 'c' }), deps);
+  await assert.rejects(() => p.invoke('q'), (e) => /\[REDACTED\]/.test(e.message) && !/sk-abcdefghij/.test(e.message));
+});
+
+test('openai: reads the key from api_key_file when the env var is unset', async () => {
+  delete process.env.ASKUP_TEST_OAI_FILE;
+  const keyFile = credFile('sk-from-file-xyz\n');
+  const deps = fakeDeps({ http: () => ({ choices: [{ message: { content: 'advice' } }] }) });
+  const p = createProvider(model({ provider: 'openai', id: 'gpt', apiKeyEnv: 'ASKUP_TEST_OAI_FILE', apiKeyFile: keyFile, baseUrl: 'https://x' }), deps);
+  await p.invoke('q');
+  assert.equal(deps.calls.httpPostJson[0].opts.headers.Authorization, 'Bearer sk-from-file-xyz');
 });
 
 // ---- codex-cli -------------------------------------------------------------

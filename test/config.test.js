@@ -42,6 +42,19 @@ test('parseConfig normalizes models, roles, and applies policy defaults', () => 
   assert.equal(c.policy.curate, false);
 });
 
+test('parseConfig reads token_file/token_env/api_key_file onto the model entry', () => {
+  const c = parseConfig(`
+models:
+  opus: { provider: anthropic-cli, id: x, trust: trusted, token_file: ./tok, token_env: CLAUDE_CODE_OAUTH_TOKEN }
+  gpt:  { provider: openai, id: y, trust: untrusted, api_key_env: OPENAI_API_KEY, api_key_file: ./key }
+roles:
+  advisor: [opus, gpt]
+`);
+  assert.equal(c.models.opus.tokenFile, './tok');
+  assert.equal(c.models.opus.tokenEnv, 'CLAUDE_CODE_OAUTH_TOKEN');
+  assert.equal(c.models.gpt.apiKeyFile, './key');
+});
+
 test('parseConfig rejects unknown provider', () => {
   const bad = `models:\n  x: { provider: magic, id: y, trust: trusted }\nroles:\n  advisor: x\n`;
   assert.throws(() => parseConfig(bad), /unknown provider/);

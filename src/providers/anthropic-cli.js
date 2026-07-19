@@ -8,6 +8,8 @@
 // (config `tools: { allow: [...], dirs: [...] }`), never on by default.
 
 import { AskupError, KIND } from '../errors.js';
+import { redactedTail } from '../redact.js';
+import { readCredentialFile } from '../credential.js';
 
 const DEFAULT_TIMEOUT_MS = 240_000;
 
@@ -28,20 +30,28 @@ export function create(model, deps) {
       } else {
         args.push('--tools', ''); // explicit empty allowlist — no tools reachable
       }
+      // Keychain-free auth (the sandbox path): if the token env var isn't already set but a token_file
+      // is configured, read it (through the credential shape gate) and inject it into the SUBPROCESS
+      // env only — never the parent, never logged. If the env var is already set, the child inherits it.
+      const tokenVar = model.tokenEnv || 'CLAUDE_CODE_OAUTH_TOKEN';
+      let env;
+      if (!process.env[tokenVar] && model.tokenFile) {
+        env = { [tokenVar]: readCredentialFile(model.tokenFile, model.configDir, `${model.name} token_file`) };
+      }
       // Prompt via STDIN, never argv (A6: argv leaks to `ps`/shell history). `claude -p` reads the
       // prompt from stdin when none is given as an argument.
       const input = system ? `${system}\n\n${prompt}` : prompt;
-      const res = await deps.runWithStdin('claude', args, { timeoutMs, input });
+      const res = await deps.runWithStdin('claude', args, { timeoutMs, input, env });
       if (res.timedOut) throw new AskupError(KIND.PROVIDER_ERROR, `claude (${model.id}) timed out after ${timeoutMs}ms`);
       // Reject a non-zero exit before trusting stdout (Sol finding 7).
       if (res.code !== 0) {
-        throw new AskupError(KIND.PROVIDER_ERROR, `claude (${model.id}) exited ${res.code}: ${(res.stderr || '').trim().slice(-200)}`);
+        throw new AskupError(KIND.PROVIDER_ERROR, `claude (${model.id}) exited ${res.code}: ${redactedTail(res.stderr)}`);
       }
       const text = (res.stdout || '').trim();
       if (!text) {
         throw new AskupError(
           KIND.PROVIDER_ERROR,
-          `claude (${model.id}) returned no output (exit ${res.code}): ${(res.stderr || '').trim().slice(-200)}`,
+          `claude (${model.id}) returned no output (exit ${res.code}): ${redactedTail(res.stderr)}`,
         );
       }
       return { text };

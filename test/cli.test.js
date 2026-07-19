@@ -139,10 +139,39 @@ test('runConfig prints models, roles, policy', async () => {
 test('runDoctor prints resolved roles and flags a sensitive-refused config', async () => {
   const cfg = parseConfig('models:\n  sol: { provider: codex-cli, id: s, trust: untrusted }\nroles:\n  advisor: [sol]\n');
   const out = sink();
-  const probe = async () => ({ reachable: true, detail: '' });
+  const probe = async () => ({ status: 'ok', detail: '' });
   const code = await runDoctor({ flags: {}, config: cfg, out: out.fn, err: sink().fn, probe });
   assert.equal(code, 0);
   assert.match(out.text(), /advisor \(sensitive\):.*REFUSED/);
+});
+
+test('runDoctor exits non-zero when no advisor is usable, and hints at a blocked sandbox', async () => {
+  const cfg = parseConfig('models:\n  a: { provider: anthropic-api, id: x, trust: trusted }\nroles:\n  advisor: [a]\n');
+  const out = sink();
+  const probe = async () => ({ status: 'egress-blocked', detail: 'unreachable' });
+  const code = await runDoctor({ flags: {}, config: cfg, out: out.fn, err: sink().fn, probe });
+  assert.equal(code, 12);
+  assert.match(out.text(), /egress-blocked/);
+  assert.match(out.text(), /sandbox/i);
+  assert.match(out.text(), /no usable advisor/);
+});
+
+test('generateStarterConfig --sandbox emits HTTP-only adapters and a request-shaped chain', () => {
+  const cfg = generateStarterConfig({ claude: true, codex: true, ollama: true }, { sandbox: true });
+  assert.match(cfg, /provider: anthropic-api/);
+  assert.match(cfg, /provider: openai/);
+  assert.doesNotMatch(cfg, /anthropic-cli|codex-cli/);
+  assert.match(cfg, /advisor: \[claude, gpt\]/);
+  // it must parse and resolve
+  const parsed = parseConfig(cfg);
+  assert.ok(parsed.roles.advisor.length >= 1);
+});
+
+test('runInit --sandbox --print includes the config-outside-workspace guidance path', () => {
+  const out = sink();
+  const code = runInit({ flags: { sandbox: true, print: true }, out: out.fn, err: sink().fn, detect: () => ({}), writeFile: () => {} });
+  assert.equal(code, 0);
+  assert.match(out.text(), /anthropic-api/);
 });
 
 test('generateStarterConfig builds an ordered advisor chain from detected providers', () => {
@@ -151,6 +180,13 @@ test('generateStarterConfig builds an ordered advisor chain from detected provid
   assert.match(all, /provider: anthropic-cli/);
   const none = generateStarterConfig({ claude: false, codex: false, ollama: false });
   assert.match(none, /advisor: \[local\]/);
+});
+
+test('runInit uses the real provider detector without crashing (regression: probeOnPath rename)', () => {
+  const out = sink();
+  const code = runInit({ flags: { print: true }, out: out.fn, err: sink().fn }); // no detect injected -> defaultDetect
+  assert.equal(code, 0);
+  assert.match(out.text(), /models:/);
 });
 
 test('runInit --print emits a starter config without writing', () => {
