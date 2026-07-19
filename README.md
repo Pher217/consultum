@@ -22,46 +22,32 @@ But there's a gap: **the workers can't talk to each other.** A Claude session ca
 
 ```mermaid
 flowchart TD
-    User([User])
-    User --> Opus
+    User([User]) --> Opus
 
-    subgraph ORCH ["Orchestrator — decides, never delegates the decision"]
-      Opus["Opus<br/><small>drives · owns the decision · writes the spec</small>"]
-    end
+    Opus["<b>Opus</b> — orchestrator<br/><small>drives · owns every decision · writes the spec</small>"]
+    Opus -->|clear spec| Workers
+    Workers -->|result| Verify
+    Verify -->|approved / redo| Opus
 
-    Opus -->|clear spec| W1["Sonnet"]
-    Opus -->|clear spec| W2["Kimi"]
-    Opus -->|clear spec| W3["GLM"]
-    Opus -->|clear spec| W4["Qwen · local"]
-    Opus -->|clear spec| W5["Codex · GPT"]
+    Workers["<b>Workers</b><br/><small>Sonnet · Kimi · GLM · Qwen · Codex — cheap, middle-tier, isolated</small>"]
+    Verify{{"<b>Verify</b><br/><small>orchestrator + reviewers</small>"}}
 
-    subgraph WORKERS ["Workers — the typing (cheap, middle-tier, isolated)"]
-      W1
-      W2
-      W3
-      W4
-      W5
-    end
+    %% advisory channel — opens only when a worker is stuck
+    Workers -. "stuck · in doubt · high-risk" .-> Curator
+    Curator -. "clean packet" .-> Advisor
+    Advisor -. "read-only advice" .-> Workers
 
-    W1 -->|result| V{{"Verify<br/><small>orchestrator + reviewers</small>"}}
-    W2 -->|result| V
-    W3 -->|result| V
-    W4 -->|result| V
-    W5 -->|result| V
-    V -->|approved / redo| Opus
-
-    W5 -. "stuck · in doubt · high-risk" .-> CUR["Curator<br/><small>compress context · surface evidence · redact secrets</small>"]
-    CUR -. "clean packet" .-> ADV["Advisor<br/><small>strong model → if unsure: panel</small>"]
-    ADV -. "read-only advice" .-> W5
+    Curator["<b>Curator</b><br/><small>compress context · redact secrets</small>"]
+    Advisor["<b>Advisor</b><br/><small>stronger model → panel if unsure</small>"]
 
     classDef orch fill:#1e3a5f,stroke:#4a90d9,stroke-width:2px,color:#fff;
-    classDef worker fill:#2d2d2d,stroke:#888,color:#eee;
+    classDef pool fill:#2d2d2d,stroke:#888,color:#eee;
     classDef channel fill:#3d2a4d,stroke:#a678d0,stroke-width:2px,color:#fff;
     classDef verify fill:#1f3d2f,stroke:#5cb87a,color:#fff;
     class Opus orch;
-    class W1,W2,W3,W4,W5 worker;
-    class CUR,ADV channel;
-    class V verify;
+    class Workers pool;
+    class Curator,Advisor channel;
+    class Verify verify;
 ```
 
 **Solid lines** are the everyday flow — delegate and verify, every task. **Dashed lines** are the advisory channel — it opens *only when a worker is stuck.*
