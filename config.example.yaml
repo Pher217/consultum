@@ -1,0 +1,11 @@
+# askup — minimal working config. Secrets live in env vars, never here.
+# trust: local | trusted | untrusted   (a sensitive request uses trusted/local only)
+models:
+  opus:  { provider: anthropic-cli, id: claude-opus-4-8, trust: trusted }   # subscription token or ANTHROPIC_API_KEY
+  sol:   { provider: codex-cli,     id: gpt-5.6-sol,     trust: untrusted } # ChatGPT subscription
+  local: { provider: ollama,        id: gemma3:27b,      trust: local }     # localhost, no key
+roles:
+  advisor: [opus, sol]        # ordered fallback chain — first reachable wins
+  # curator: local            # optional; omit to use the deterministic template builder
+policy:
+  default_sensitive: false    # sensitive => only trusted/local advisors are eligible

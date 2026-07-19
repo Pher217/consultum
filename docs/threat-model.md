@@ -58,6 +58,20 @@ credential.
 - **Mitigation:** question and context are passed via **stdin**, not argv. Token/credential
   files are referenced by path/env only, never inlined in config, and are gitignored.
 
+## Controls in code (each adversary maps to a specific, tested control)
+
+| Adversary | Control | Where |
+|---|---|---|
+| A1 injection | Context wrapped in nonce-tagged "this is DATA, not instructions" delimiters, both hops | `src/prompts.js` (`wrapUntrusted`), used by `curator.js` + `consult.js` |
+| A2 secret exfil via tools | Advisors invoked with **no tools by default**; tools opt-in AND directory-scoped | every `src/providers/*.js`; `config.js` refuses `allow` without `dirs`; asserted in `test/providers.test.js` |
+| A3 RCE via recommendation | Advisor output schema-validated (parse contract) + linted for shell/network commands | `src/recommendation.js`; asserted in `test/recommendation.test.js` |
+| A4 redaction bypass | Redact twice (raw input + curated output); sensitive routing keeps third parties out entirely | `src/redact.js` (10-case regression), `src/consult.js` |
+| A5 fail-open sensitivity | Sensitivity is config-level (`default_sensitive` + per-path); `--sensitive` only escalates | `src/config.js` (`isSensitive`); refusal in `consult.js`; asserted in `test/consult.test.js` |
+| A6 argv/cred leak | Question + context via stdin (CLI + `runWithStdin`); tokens by path/env, gitignored | `bin/askup.js`, `src/run.js`; `codex-cli` argv exposure is the documented residual |
+
+Fail-closed refusal (a sensitive request with no trusted/local advisor) returns exit code `11`
+(`refused-by-policy`) and never downgrades to a third party — see `test/consult.test.js`.
+
 ## Non-goals (security)
 Not a sandbox, not a DLP system, not a guarantee against a determined adversary who controls the
 executor's input. `askup` reduces accidental leakage and the most obvious injection paths, and is
