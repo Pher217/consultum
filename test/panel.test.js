@@ -128,7 +128,7 @@ test('a reconciler synthesizes and is labelled as such', async () => {
       deps: deps({ 'adv-model': REC('primary', 50), 'panel-one': REC('one', 80), 'panel-two': REC('two', 70), 'recon-model': REC('the reconciled view', 75) }),
     });
     assert.equal(rec.panel.agreement, 'reconciled');
-    assert.match(rec.panel.reconciliation, /the reconciled view/);
+    assert.match(rec.panel.reconciliation.recommendation, /the reconciled view/);
     assert.equal(rec.panel.reconciledBy, 'recon-model');
   } finally {
     delete process.env.ASKUP_TEST_PANEL_KEY;
@@ -187,7 +187,12 @@ roles:
     question: 'q', panel: true, config: cfg,
     deps: deps({ dup: REC('an answer', 50) }),
   });
-  assert.equal(rec.panel, null, 'same provider+id adds no independence -> no panel convened');
+  // same (provider,id) adds no independence -> not convened. But because the caller EXPLICITLY asked
+  // for a panel, the refusal must be reported, never silently returned as null (Fable H2).
+  assert.equal(rec.panel.convened, false);
+  assert.equal(rec.panel.agreement, 'not-convened');
+  assert.match(rec.panel.reason, /no eligible panelist/);
+  assert.equal(rec.panel.views.length, 0);
 });
 
 test('a FAILED reconciler is reported distinctly, not disguised as "none configured" (live-caught)', async () => {
@@ -209,6 +214,61 @@ roles:
   assert.equal(rec.panel.agreement, 'reconciler-failed');
   assert.equal(rec.panel.reconciliation, null);
   assert.match(rec.panel.reconcilerError, /recon-model/);
+});
+
+test('the reconciler DISSENT + confidence survive into the result (Fable C1)', async () => {
+  // The reconciler is told to put material disagreement in Alternatives and lower its confidence.
+  // Keeping only `recommendation` would amputate the dissent and render disagreement as consensus.
+  process.env.ASKUP_TEST_PANEL_KEY = 'k';
+  try {
+    const synth =
+      '## Recommended Approach\ndo the safe thing\n' +
+      '## Alternatives\nAdvisor 2 flatly disagreed and wanted the opposite\n' +
+      '## Risks\nreconciled risk\n## Confidence\n40';
+    const rec = await consult({
+      question: 'q', panel: true, config: parseConfig(CFG),
+      deps: deps({ 'adv-model': REC('primary', 50), 'panel-one': REC('one', 80), 'panel-two': REC('two', 70), 'recon-model': synth }),
+    });
+    assert.match(rec.panel.reconciliation.dissent, /flatly disagreed/, 'dissent must not be dropped');
+    assert.equal(rec.panel.reconciliation.confidence, 40, 'lowered confidence must survive');
+    assert.match(rec.panel.reconciliation.risks, /reconciled risk/);
+    assert.ok(Array.isArray(rec.panel.reconciliation.warnings));
+  } finally {
+    delete process.env.ASKUP_TEST_PANEL_KEY;
+  }
+});
+
+test('an untrusted reconciler on a sensitive request is reported as EXCLUDED, not "none configured" (Fable H2)', async () => {
+  const cfg = parseConfig(`
+models:
+  adv:   { provider: ollama, id: adv-model, trust: trusted }
+  p1:    { provider: ollama, id: panel-one, trust: trusted }
+  recon: { provider: codex-cli, id: recon-model, trust: untrusted }
+roles:
+  advisor: [adv]
+  panel: [p1]
+  reconciler: recon
+`);
+  const rec = await consult({
+    question: 'q', panel: true, sensitive: true, config: cfg,
+    deps: deps({ 'adv-model': REC('primary', 50), 'panel-one': REC('one', 80) }),
+  });
+  assert.equal(rec.panel.agreement, 'reconciler-excluded-sensitive');
+  assert.equal(rec.panel.reconciliation, null);
+});
+
+test('policy.panel_auto:false requires an explicit --panel (Fable M2 — auto fan-out is separate consent)', async () => {
+  process.env.ASKUP_TEST_PANEL_KEY = 'k';
+  try {
+    const cfg = parseConfig(`${CFG}policy:\n  panel_auto: false\n`);
+    const d = { 'adv-model': REC('unsure', 20), 'panel-one': REC('one', 80), 'panel-two': REC('two', 70), 'recon-model': REC('r', 75) };
+    const auto = await consult({ question: 'q', config: cfg, deps: deps(d) });
+    assert.equal(auto.panel, null, 'low confidence must NOT auto-convene when panel_auto is false');
+    const forced = await consult({ question: 'q', panel: true, config: cfg, deps: deps(d) });
+    assert.equal(forced.panel.convened, true, '--panel still works');
+  } finally {
+    delete process.env.ASKUP_TEST_PANEL_KEY;
+  }
 });
 
 test('a single-provider panel is flagged as correlated', () => {

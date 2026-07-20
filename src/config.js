@@ -27,7 +27,11 @@ const KNOWN_PROVIDERS = new Set([
 const POLICY_DEFAULTS = {
   default_sensitive: false,
   curate: false, // curator hop is off by default in v0.1 (§18: optional, off by default)
-  panel_threshold: 70, // confidence below this flags low-confidence (panel itself is v0.2)
+  panel_threshold: 70, // confidence below this flags low-confidence (and auto-convenes a panel)
+  // Configuring `roles.panel` opts in to a second opinion; this controls whether a LOW-CONFIDENCE
+  // answer may convene one AUTOMATICALLY. Auto-firing costs N extra model calls per consult, so it
+  // is a separate consent from "a panel exists". Set false to require an explicit --panel.
+  panel_auto: true,
   max_consults_per_task: 3, // library mode only (CLI is stateless unless --task-id is passed)
   min_attempts_before_debug_consult: 2,
   sensitive_paths: [], // optional globs; a matching sourcePath forces a request sensitive
@@ -172,7 +176,7 @@ function normalizeConfig(raw, filename) {
 // e.g. `default_sensitive: "true"` (a string) would otherwise be truthy in config but fail the
 // `=== true` check in isSensitive(), leaving an untrusted advisor eligible (a fail-open). Reported by
 // the Sol review.
-const BOOL_POLICY = new Set(['default_sensitive', 'curate']);
+const BOOL_POLICY = new Set(['default_sensitive', 'curate', 'panel_auto']);
 const INT_POLICY = {
   panel_threshold: [0, 100],
   max_consults_per_task: [1, Number.MAX_SAFE_INTEGER],
