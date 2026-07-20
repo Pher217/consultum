@@ -75,9 +75,31 @@ hang. It exits non-zero if no advisor is usable.
 ## 4. If egress itself is blocked (the deferred piece)
 
 Some sandboxes (Codex) block outbound network entirely, and the only way through is to launch the
-**host engine** with egress on — e.g. `codex -c sandbox_workspace_write.network_access=true`. That is
-**the host engine's launch decision, not askup's** (askup is not an engine launcher — see the
-non-goals). Two things to understand before you do it:
+**host engine** with egress on. That is **the host engine's launch decision, not askup's** (askup is
+not an engine launcher — see the non-goals).
+
+### The flag only works in `workspace-write` mode (verified 2026-07-20)
+
+`-c sandbox_workspace_write.network_access=true` is, as the key name says, scoped to the
+**workspace-write** sandbox. Under `-s read-only` it is **silently ignored** — no warning, no error,
+just a network failure that looks like a broken tool. Measured, same command each time:
+
+| Codex invocation | askup result |
+|---|---|
+| `-s read-only` (no flag) | `provider-error` · `fetch failed` in ~292 ms |
+| `-s read-only -c sandbox_workspace_write.network_access=true` | **still** `fetch failed` in ~275 ms — flag ignored |
+| `-s workspace-write -c sandbox_workspace_write.network_access=true` | **exit 0**, advisor answered |
+
+So a consult from inside a read-only Codex worker **cannot reach the network at all**, and no
+config key changes that.
+
+> **The trade-off, stated plainly:** to get egress you must grant **workspace-write** — a strictly
+> broader permission — even though an askup consult writes nothing. There is no "read-only + network"
+> option here. If you are not willing to grant write access, **do not** try to consult from inside the
+> sandbox: run askup from the host (outside the sandbox) and pass the worker its result, or use the
+> parent-mediated relay (the dispatching agent performs the consult on the worker's behalf).
+
+Two more things to understand before enabling egress at all:
 
 - **It opens egress for the whole session, not just one consult.** Every command that session runs
   can then reach the network. A compromised or prompt-injected worker can exfiltrate. Keep bulk

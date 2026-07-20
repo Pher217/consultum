@@ -6,7 +6,8 @@
 // the caller stays the decision-owner. It refuses (throws) rather than silently downgrading a
 // sensitive request to a third-party advisor.
 
-import { loadConfig, isSensitive, resolveAdvisorChain, resolveCurator } from './config.js';
+import { loadConfig, isSensitive, resolveAdvisorChain, resolveCurator, resolvePanel, resolveReconciler } from './config.js';
+import { convenePanel, reconcile, correlationWarning } from './panel.js';
 import { redactSecrets } from './redact.js';
 import { createProvider } from './providers/index.js';
 import { curate, buildTemplatePacket } from './curator.js';
@@ -24,6 +25,7 @@ export async function consult({
   context = '',
   sensitive = false,
   curate: curateFlag,
+  panel = false,
   sourcePath = null,
   config,
   deps = defaultRuntime,
@@ -84,6 +86,131 @@ export async function consult({
     parse: (t) => parseRecommendation(t, { panelThreshold: cfg.policy.panel_threshold }),
   });
 
+  // 6b. Panel (spec §8). Convened when the caller forces it, or when the advisor self-reports low
+  // confidence AND a panel is configured. Self-reported confidence is a labeled heuristic, not a
+  // measurement — `--panel` is the reliable trigger. A panel is never required: if none is
+  // configured/eligible, the primary recommendation stands unchanged.
+  let panelResult = null;
+  // Exclude the model that already answered — asking it again adds no independence. Identity is
+  // (provider, id), NOT id alone: the same id on a different provider is a genuinely different
+  // advisor and must stay on the panel (caught live — an openai-compatible panelist sharing an id
+  // with the ollama advisor was being dropped silently).
+  const key = (m) => `${m.provider} ${m.id}`;
+  const seen = new Set([key(model)]);
+  const panelists = resolvePanel(cfg, { sensitive: eff }).filter((m) => {
+    if (seen.has(key(m))) return false; // also dedupes duplicate panel entries
+    seen.add(key(m));
+    return true;
+  });
+  const autoAllowed = cfg.policy.panel_auto !== false;
+  const wantPanel = Boolean(panel) || (rec.lowConfidence && autoAllowed);
+
+  // An explicitly requested panel that yields no eligible panelists must SAY so — silently returning
+  // no panel after the caller asked for one hides a policy refusal.
+  if (panel && panelists.length === 0) {
+    panelResult = {
+      convened: false,
+      trigger: 'requested',
+      reason: eff
+        ? 'no eligible panelist: every configured panelist is untrusted and this request is sensitive'
+        : 'no eligible panelist configured (roles.panel is empty, or only names the primary advisor)',
+      views: [],
+      failures: [],
+      agreement: 'not-convened',
+      reconciliation: null,
+      reconciledBy: null,
+      reconcilerError: null,
+      correlation: null,
+    };
+  }
+  if (wantPanel && panelists.length > 0) {
+   try {
+    const { views, failures } = await convenePanel(panelists, {
+      prompt,
+      system: ADVISOR_SYSTEM,
+      timeoutMs: advisorTimeoutMs,
+      deps,
+      parse: (t) => parseRecommendation(t, { panelThreshold: cfg.policy.panel_threshold }),
+    });
+    // A reconciler configured but dropped for trust is NOT the same as "none configured" — the CLI
+    // must not claim the latter when policy refused the former.
+    const reconciler = resolveReconciler(cfg, { sensitive: eff });
+    const reconcilerExcluded = Boolean(cfg.roles.reconciler) && !reconciler;
+    const synth = await reconcile(reconciler, {
+      question: q,
+      views,
+      // The primary advisor's answer is part of what gets reconciled — it is the opinion that
+      // triggered the panel. Reconciling only the panelists would make "reconciled" overstate
+      // what actually happened.
+      primary: {
+        model: model.id,
+        provider: model.provider,
+        recommendation: rec.recommendation,
+        confidence: rec.confidence,
+        risks: rec.risks ?? null,
+      },
+      timeoutMs: advisorTimeoutMs,
+      deps,
+      parse: (t) => parseRecommendation(t, { panelThreshold: cfg.policy.panel_threshold }),
+    });
+    panelResult = {
+      convened: true,
+      trigger: panel ? 'requested' : 'low-confidence',
+      views,
+      failures,
+      // Three DISTINCT states, never conflated:
+      //   'unassessed'        - no reconciler configured; askup does NOT guess whether views agree
+      //                         (spec §18: free-text agreement detection is not deterministic)
+      //   'reconciled'        - a reconciler actually synthesized them
+      //   'reconciler-failed' - one was configured but failed; the views still stand
+      //   'reconciler-excluded-sensitive' - one IS configured but policy dropped it (trust filter)
+      agreement:
+        synth.status === 'reconciled'
+          ? 'reconciled'
+          : synth.status === 'failed'
+            ? 'reconciler-failed'
+            : reconcilerExcluded
+              ? 'reconciler-excluded-sensitive'
+              : 'unassessed',
+      // The reconciler is INSTRUCTED to put material disagreement in Alternatives and to lower its
+      // confidence when views diverge. Keeping only `recommendation` would amputate exactly the
+      // dissent channel the synthesis exists to produce, rendering disagreement as clean consensus.
+      reconciliation: synth.status === 'reconciled'
+        ? {
+            recommendation: synth.rec.recommendation,
+            dissent: synth.rec.alternatives ?? null,
+            risks: synth.rec.risks ?? null,
+            confidence: synth.rec.confidence,
+            warnings: synth.rec.warnings ?? [],
+          }
+        : null,
+      reconciledBy: synth.status === 'reconciled' ? synth.model : null,
+      // Auditable: exactly which opinions the synthesis weighed (primary first, then panelists).
+      reconciledOver: synth.status === 'reconciled' ? synth.over : null,
+      reconcilerError: synth.status === 'failed' ? `${synth.model}: ${synth.error}` : null,
+      correlation: correlationWarning([{ provider: model.provider }, ...views]),
+      usage: views.map((v) => v.usage ?? null).concat(synth.usage ?? null),
+    };
+   } catch (err) {
+    // The primary recommendation is already paid for and valid. A misconfigured PANEL must not
+    // destroy it on the auto path — the caller never asked for a panel there. An explicitly
+    // requested panel still fails loud, because the caller asked for exactly that.
+    if (panel) throw err;
+    panelResult = {
+      convened: false,
+      trigger: 'low-confidence',
+      reason: `panel skipped — ${err.message}`,
+      views: [],
+      failures: [err.message],
+      agreement: 'not-convened',
+      reconciliation: null,
+      reconciledBy: null,
+      reconcilerError: null,
+      correlation: null,
+    };
+   }
+  }
+
   if (taskId && state && sig) recordConsult(state, taskId, sig);
 
   // 7. assemble the StructuredRecommendation with provenance (models used, curated y/n, usage).
@@ -100,6 +227,9 @@ export async function consult({
     confidence: rec.confidence,
     lowConfidence: rec.lowConfidence,
     warnings: rec.warnings,
+    // null when no panel was convened. When present, every panelist view is visible and `agreement`
+    // is 'unassessed' unless a reconciler actually synthesized them — askup does not guess consensus.
+    panel: panelResult,
     provenance: {
       advisorModel: model.id,
       advisorProvider: model.provider,

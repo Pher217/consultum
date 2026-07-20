@@ -38,6 +38,7 @@ export function parseArgs(argv) {
     if (a === '--sensitive') flags.sensitive = true;
     else if (a === '--curate') flags.curate = true;
     else if (a === '--no-curate') flags.curate = false;
+    else if (a === '--panel') flags.panel = true;
     else if (a === '--json') flags.json = true;
     else if (a === '--print') flags.print = true;
     else if (a === '--force') flags.force = true;
@@ -99,6 +100,47 @@ export function formatHuman(rec) {
   if (rec.lowConfidence) {
     lines.push(`(!) low confidence (< ${p.panelThreshold}). Consider a second opinion; the advisor advises — you decide.`, '');
   }
+  if (rec.panel) {
+    const pn = rec.panel;
+    if (!pn.convened) {
+      lines.push(`## Panel — NOT convened (${pn.trigger})`, `(!) ${pn.reason}`, '');
+    } else {
+      lines.push(`## Panel (${pn.views.length} advisor${pn.views.length === 1 ? '' : 's'}, ${pn.trigger})`, '');
+      for (const v of pn.views) {
+        lines.push(`### ${v.model} — confidence ${v.confidence}`, v.recommendation, '');
+        // Panel views are model output shown to the reader — they get the same runnable-command
+        // lint treatment as the primary recommendation, or a command could slip through unflagged.
+        for (const w of v.warnings ?? []) lines.push(`    (!) ${w}`);
+        if (v.warnings?.length) lines.push('');
+      }
+      if (pn.agreement === 'reconciled') {
+        const r = pn.reconciliation;
+        lines.push(
+          `### Reconciled by ${pn.reconciledBy} — confidence ${r.confidence}`,
+          `(over: ${(pn.reconciledOver || []).join(', ')})`,
+          r.recommendation,
+          '',
+        );
+        // The dissent is the whole point of a reconciliation; never drop it.
+        if (r.dissent) lines.push('#### Dissent / alternatives across advisors', r.dissent, '');
+        if (r.risks) lines.push('#### Risks (reconciled)', r.risks, '');
+        for (const w of r.warnings ?? []) lines.push(`    (!) ${w}`);
+        if (r.warnings?.length) lines.push('');
+      } else if (pn.agreement === 'reconciler-failed') {
+        lines.push(`(!) reconciler FAILED (${pn.reconcilerError}) — views are NOT assessed for agreement.`, '    Fix the reconciler or read the views and decide.', '');
+      } else if (pn.agreement === 'reconciler-excluded-sensitive') {
+        lines.push('(!) a reconciler IS configured but was excluded: this request is sensitive and the', '    reconciler is untrusted. Views are NOT assessed for agreement.', '');
+      } else {
+        lines.push('(i) No reconciler configured — the views above are NOT assessed for agreement.', '    askup will not guess whether they agree; read them and decide.', '');
+      }
+      if (pn.correlation) lines.push(`(!) ${pn.correlation}`, '');
+      if (pn.failures?.length) {
+        lines.push('(!) panelists that failed:');
+        for (const f of pn.failures) lines.push(`    - ${f}`);
+        lines.push('');
+      }
+    }
+  }
   if (rec.warnings?.length) {
     lines.push('(!) warnings — advice contains possible runnable commands; never pipe to a shell unexamined:');
     for (const w of rec.warnings) lines.push(`    - ${w}`);
@@ -141,6 +183,7 @@ export async function runConsult({ stdin, flags, config, deps = defaultRuntime, 
       sensitive: Boolean(flags.sensitive),
       sourcePath,
       curate: flags.curate,
+      panel: Boolean(flags.panel),
       config: cfg,
       deps,
       taskId: flags.taskId ?? null,

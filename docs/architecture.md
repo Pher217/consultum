@@ -19,8 +19,30 @@ Executor (any model/engine, stuck)
   -> Executor evaluates, implements the smallest safe fix, verifies
 ```
 
-Panel escalation (multiple advisors reconciled when confidence is low or `--panel` is passed) is
-a v0.2 feature. In v0.1, reliability comes from an **ordered availability fallback chain**, not a panel.
+Reliability comes first from an **ordered availability fallback chain** (first reachable advisor wins).
+
+**Panel escalation** adds a second opinion on top: pass `--panel`, or let it fire automatically when
+the advisor self-reports confidence below `panel_threshold`. Panelists (`roles.panel`) run
+**concurrently**, are trust-filtered exactly like the advisor, and a failing panelist is recorded
+without sinking the panel. Two deliberate honesty rules:
+
+- **askup does not judge whether the views agree.** Free-text agreement detection is not
+  deterministic, so with no `roles.reconciler` configured the panel reports `agreement: "unassessed"`
+  and shows every view — it will not manufacture a consensus verdict.
+- **A reconciler that fails is reported as `reconciler-failed`**, never silently downgraded to
+  "unassessed" — a broken synthesis model must not look like an absent one.
+
+Configure a `roles.reconciler` (a *capable* model — reconciling several views is harder than
+answering, and small models routinely miss the section contract) to get a real synthesis pass that
+names the dissent. A panel drawn from one provider family is flagged as `correlated`.
+
+**Cost — know this before enabling auto.** One consult with a panel of N costs
+`1 primary + N panelists (concurrent) + up to 2 reconciler calls` (the reconciler retries once on
+unparseable output, same as the advisor ladder). A weak reconciler therefore costs *two* calls to
+still fail. `policy.panel_auto` (default `true`) controls whether a low-confidence answer may convene
+one automatically — set it `false` to require an explicit `--panel`, because "a panel is configured"
+and "every sub-threshold answer may fan out" are different decisions. Panel calls are *not* counted
+against `max_consults_per_task` (that counts consults, not fan-out).
 
 ## Roles → models (config)
 
