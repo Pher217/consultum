@@ -2,10 +2,19 @@
 // askup CLI entry — a thin wrapper. All logic lives in src/cli.js (unit-tested there). Reads the
 // question + context from STDIN for `consult` (never argv), maps commands, sets the process exit code.
 
+import { readFileSync } from 'fs';
 import { parseArgs, runConsult, runConfig, runDoctor, runInit, USAGE } from '../src/cli.js';
 
 const out = (s) => process.stdout.write(`${s}\n`);
 const err = (s) => process.stderr.write(`${s}\n`);
+
+function version() {
+  try {
+    return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+  } catch {
+    return '0.0.0';
+  }
+}
 
 async function readStdin() {
   if (process.stdin.isTTY) return '';
@@ -16,6 +25,11 @@ async function readStdin() {
 
 async function main() {
   const { command, flags } = parseArgs(process.argv.slice(2));
+
+  if (flags.version) {
+    out(version());
+    return;
+  }
 
   if (flags.help || !command) {
     out(USAGE);

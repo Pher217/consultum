@@ -46,6 +46,7 @@ export function parseArgs(argv) {
     else if (a === '--source-path') flags.sourcePath = rest[++i];
     else if (a === '--config') flags.config = rest[++i];
     else if (a === '--help' || a === '-h') flags.help = true;
+    else if (a === '--version' || a === '-v') flags.version = true;
     else flags._.push(a);
   }
   return { command, flags };

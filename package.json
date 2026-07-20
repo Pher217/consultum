@@ -8,12 +8,16 @@
     ".": "./src/index.js",
     "./package.json": "./package.json"
   },
-  "files": ["bin", "src", "shim", "config.example.yaml", "README.md", "LICENSE", "SECURITY.md", "docs"],
+  "files": ["bin", "src", "shim", "config.example.yaml", "README.md", "LICENSE", "SECURITY.md", "CHANGELOG.md", "docs"],
+  "repository": { "type": "git", "url": "git+https://github.com/Pher217/askup.git" },
+  "homepage": "https://github.com/Pher217/askup#readme",
+  "bugs": { "url": "https://github.com/Pher217/askup/issues" },
   "scripts": {
     "test": "node --test",
-    "lint": "node --check bin/askup.js && for f in src/*.js src/providers/*.js; do node --check \"$f\"; done"
+    "lint": "node scripts/lint.mjs",
+    "prepublishOnly": "npm test"
   },
-  "keywords": ["llm", "advisory", "escalation", "multi-model", "orchestration", "ollama", "codex", "anthropic"],
+  "keywords": ["llm", "advisory", "escalation", "multi-model", "orchestration", "ollama", "codex", "anthropic", "ai-agents", "read-only-advisor"],
   "license": "MIT",
   "author": "Pher217",
   "engines": { "node": ">=20" },

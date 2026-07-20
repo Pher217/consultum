@@ -2,7 +2,7 @@
 
 > An advisory channel for delegated AI workers. When a cheap worker gets stuck, it can **ask up** — escalate a curated problem to a stronger model — instead of guessing.
 
-**Status: v0.1 implemented.** [`npm install`](package.json) then `askup init` / `askup doctor` / `askup consult`. 121 tests passing, security-first (see below). See [`docs/architecture.md`](docs/architecture.md) and [`docs/threat-model.md`](docs/threat-model.md).
+**Status: v0.1 implemented.** `npm install -g askup` (or `npx askup`), then `askup init` → `askup doctor` → `askup consult`. Security-first (see below). See [`docs/architecture.md`](docs/architecture.md) and [`docs/threat-model.md`](docs/threat-model.md).
 
 *(`askup` is a working name — will be finalized against npm/PyPI/GitHub availability before the first release.)*
 
@@ -44,6 +44,10 @@ This tool ships *your code's context* to model providers, so security is first-c
 1. **The advisor runs with no tools by default** — the curated packet is its entire world. "Read-only" is *not* a safety guarantee: a filesystem-equipped advisor reachable through an injectable packet could read local secrets and echo them back. Filesystem access is opt-in, directory-scoped, and restricted to read-only tools. **One exception to know:** the `codex-cli` adapter (`codex exec -s read-only`) is a *read-capable agent*, not a no-tools advisor — prefer the `openai` adapter for a request-shaped OpenAI advisor, and never point `codex-cli` at sensitive data. See [`docs/threat-model.md`](docs/threat-model.md).
 2. **The returned recommendation is untrusted input.** It is aimed at the *weakest* model in the system. Never pipe an advisor's implementation guidance to a shell unexamined; output is schema-validated and linted for embedded shell/network commands.
 3. **Redaction is best-effort** against *accidental* leakage, not adversarial encoding. No telemetry — `askup` phones home to nobody but the model providers you configure.
+
+## Use it from any language
+
+askup's core is Node, but you drive it over a clean process contract — question + context on stdin, a JSON recommendation on stdout, machine-readable exit codes — so any language works. See [`docs/calling-from-python.md`](docs/calling-from-python.md) for a ~15-line Python wrapper. (A native MCP server, so MCP-native agent frameworks can call `consult` as a tool, is on the roadmap.)
 
 ## Non-goals
 
