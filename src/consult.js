@@ -165,6 +165,25 @@ export async function consult({
       deps,
       parse: (t) => parseRecommendation(t, { panelThreshold: cfg.policy.panel_threshold }),
     });
+    // Every panelist failed. "convened: true" with zero views would report a second opinion that
+    // does not exist — the caller sees a panel block and reasonably assumes it was weighed. Say
+    // plainly that nothing came back, and list why each one failed.
+    if (views.length === 0) {
+      panelResult = {
+        convened: false,
+        trigger: panel ? 'requested' : 'low-confidence',
+        reason: `every panelist failed (${failures.length}) — no second opinion was obtained`,
+        views: [],
+        failures,
+        agreement: 'not-convened',
+        reconciliation: null,
+        reconciledBy: null,
+        reconciledOver: null,
+        reconcilerError: null,
+        correlation: null,
+        usage: [],
+      };
+    } else {
     panelResult = {
       convened: true,
       trigger: panel ? 'requested' : 'low-confidence',
@@ -172,7 +191,7 @@ export async function consult({
       failures,
       // Three DISTINCT states, never conflated:
       //   'unassessed'        - no reconciler configured; askup does NOT guess whether views agree
-      //                         (spec §18: free-text agreement detection is not deterministic)
+      //                         (free-text agreement detection is not deterministic)
       //   'reconciled'        - a reconciler actually synthesized them
       //   'reconciler-failed' - one was configured but failed; the views still stand
       //   'reconciler-excluded-sensitive' - one IS configured but policy dropped it (trust filter)
@@ -201,8 +220,9 @@ export async function consult({
       reconciledOver: synth.status === 'reconciled' ? synth.over : null,
       reconcilerError: synth.status === 'failed' ? `${synth.model}: ${synth.error}` : null,
       correlation: correlationWarning([{ provider: model.provider }, ...views]),
-      usage: views.map((v) => v.usage ?? null).concat(synth.usage ?? null),
+      usage: views.map((v) => v.usage ?? null).concat(synth.usage ? [synth.usage] : []),
     };
+    }
    } catch (err) {
     // The primary recommendation is already paid for and valid. A misconfigured PANEL must not
     // destroy it on the auto path — the caller never asked for a panel there. An explicitly

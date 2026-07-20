@@ -46,6 +46,9 @@ export async function askupTool(args = {}, opts = {}) {
       sensitive: Boolean(args.sensitive),
       sourcePath: opts.sourcePath ?? null,
       curate: opts.curate,
+      // HOST-controlled, deliberately not in `args`: a panel costs one paid call per panelist,
+      // so the weak worker must not be able to trigger that spend itself.
+      panel: Boolean(opts.panel),
       config: opts.config,
       deps: opts.deps,
       taskId: opts.taskId,

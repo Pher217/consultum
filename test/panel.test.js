@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { consult } from '../src/consult.js';
-import { parseConfig, resolvePanel, resolveReconciler } from '../src/config.js';
+import { parseConfig, resolvePanel, resolveReconciler, MAX_PANELISTS } from '../src/config.js';
 import { convenePanel, correlationWarning, buildReconcilerPrompt } from '../src/panel.js';
 import { parseRecommendation } from '../src/recommendation.js';
+import { askupTool } from '../src/shim.js';
 
 const REC = (approach, conf) =>
   `## Recommended Approach\n${approach}\n## Risks\nsome risk\n## Confidence\n${conf}`;
@@ -101,7 +102,7 @@ test('low confidence auto-triggers the panel; high confidence does not', async (
 });
 
 test('WITHOUT a reconciler askup does NOT claim agreement — it reports "unassessed"', async () => {
-  // Regression for spec §18: free-text agreement detection is not deterministic, so never fake it.
+  // Regression: free-text agreement detection is not deterministic, so never fake it.
   const noRecon = parseConfig(`
 models:
   adv: { provider: ollama, id: adv-model, trust: trusted }
@@ -188,7 +189,7 @@ roles:
     deps: deps({ dup: REC('an answer', 50) }),
   });
   // same (provider,id) adds no independence -> not convened. But because the caller EXPLICITLY asked
-  // for a panel, the refusal must be reported, never silently returned as null (Fable H2).
+  // for a panel, the refusal must be reported, never silently returned as null.
   assert.equal(rec.panel.convened, false);
   assert.equal(rec.panel.agreement, 'not-convened');
   assert.match(rec.panel.reason, /no eligible panelist/);
@@ -216,7 +217,7 @@ roles:
   assert.match(rec.panel.reconcilerError, /recon-model/);
 });
 
-test('the reconciler DISSENT + confidence survive into the result (Fable C1)', async () => {
+test('the reconciler DISSENT + confidence survive into the result', async () => {
   // The reconciler is told to put material disagreement in Alternatives and lower its confidence.
   // Keeping only `recommendation` would amputate the dissent and render disagreement as consensus.
   process.env.ASKUP_TEST_PANEL_KEY = 'k';
@@ -238,7 +239,7 @@ test('the reconciler DISSENT + confidence survive into the result (Fable C1)', a
   }
 });
 
-test('an untrusted reconciler on a sensitive request is reported as EXCLUDED, not "none configured" (Fable H2)', async () => {
+test('an untrusted reconciler on a sensitive request is reported as EXCLUDED, not "none configured"', async () => {
   const cfg = parseConfig(`
 models:
   adv:   { provider: ollama, id: adv-model, trust: trusted }
@@ -257,7 +258,7 @@ roles:
   assert.equal(rec.panel.reconciliation, null);
 });
 
-test('policy.panel_auto:false requires an explicit --panel (Fable M2 — auto fan-out is separate consent)', async () => {
+test('policy.panel_auto:false requires an explicit --panel — auto fan-out is separate consent', async () => {
   process.env.ASKUP_TEST_PANEL_KEY = 'k';
   try {
     const cfg = parseConfig(`${CFG}policy:\n  panel_auto: false\n`);
@@ -335,4 +336,70 @@ test('reconciler prompt wraps views as untrusted data', () => {
   const p = buildReconcilerPrompt('the question', [{ model: 'm1', confidence: 80, recommendation: 'do X', risks: null }]);
   assert.match(p, /UNTRUSTED DATA/);
   assert.match(p, /do X/);
+});
+
+// --- Regressions: the panel must not overstate what it produced ---------------------------------
+
+test('when EVERY panelist fails, the result says so instead of reporting a convened panel', async () => {
+  const cfg = parseConfig(`
+models:
+  a: { provider: ollama, id: a, trust: local }
+  p1: { provider: ollama, id: p1, trust: local }
+  p2: { provider: ollama, id: p2, trust: local }
+roles:
+  advisor: [a]
+  panel: [p1, p2]
+`);
+  const deps = {
+    httpPostJson: async (url, body) => {
+      if (body.model === 'a') return { message: { content: REC('Do the safe thing.', 88) } };
+      throw new Error(`${body.model} is down`);
+    },
+  };
+  const rec = await consult({ question: 'q', context: 'c', panel: true, config: cfg, deps });
+  assert.equal(rec.panel.convened, false, 'zero surviving views must not be reported as convened');
+  assert.equal(rec.panel.views.length, 0);
+  assert.equal(rec.panel.failures.length, 2, 'each failure must be listed');
+  assert.match(rec.panel.reason, /every panelist failed/i);
+  // the primary recommendation is untouched — a dead panel must not destroy a paid-for answer
+  assert.equal(rec.recommendation, 'Do the safe thing.');
+});
+
+test('the panel is capped so one consult cannot fan out to unbounded paid calls', () => {
+  const names = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'];
+  const cfg = parseConfig(`
+models:
+${names.map((n) => `  ${n}: { provider: ollama, id: ${n}, trust: local }`).join('\n')}
+roles:
+  advisor: [p1]
+  panel: [${names.join(', ')}]
+`);
+  assert.equal(resolvePanel(cfg, { sensitive: false }).length, MAX_PANELISTS);
+});
+
+test('askupTool forwards a host-requested panel (and never lets args request one)', async () => {
+  const cfg = parseConfig(`
+models:
+  a:  { provider: ollama, id: a,  trust: local }
+  p1: { provider: ollama, id: p1, trust: local }
+roles:
+  advisor: [a]
+  panel: [p1]
+`);
+  const seen = [];
+  const deps = {
+    httpPostJson: async (url, body) => {
+      seen.push(body.model);
+      return { message: { content: REC('Do the safe thing.', 88) } };
+    },
+  };
+  const viaOpts = await askupTool({ question: 'q', context: 'c' }, { config: cfg, deps, panel: true });
+  assert.equal(viaOpts.ok, true);
+  assert.ok(seen.includes('p1'), 'opts.panel must actually reach consult()');
+
+  seen.length = 0;
+  // the worker asking for a panel in ARGS must not trigger one — that is the host's spend
+  const viaArgs = await askupTool({ question: 'q', context: 'c', panel: true }, { config: cfg, deps });
+  assert.equal(viaArgs.ok, true);
+  assert.ok(!seen.includes('p1'), 'a worker must not be able to convene a paid panel via args');
 });

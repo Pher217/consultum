@@ -13,12 +13,18 @@ import { defaultRuntime } from './run.js';
 const USAGE = `askup — an advisory channel for delegated AI workers
 
 Usage:
-  askup consult [--sensitive] [--curate|--no-curate] [--json] [--task-id ID]
+  askup consult [--sensitive] [--panel] [--curate|--no-curate] [--json] [--task-id ID]
                 [--source-path PATH] [--config PATH]
                 (reads the question + context from STDIN — see below)
+
   askup init [--interactive] [--print] [--force] [--sandbox] [--config PATH]
   askup doctor [--config PATH]
   askup config [--config PATH]
+
+--panel: ask every model in roles.panel the same question concurrently and show each view.
+  Costs one extra model call PER PANELIST, plus the reconciler if configured. It also fires
+  automatically on a low-confidence answer when a panel is configured — set
+  policy.panel_auto: false to require an explicit --panel.
 
 STDIN protocol for 'consult':
   - JSON:  {"question": "...", "context": "..."}

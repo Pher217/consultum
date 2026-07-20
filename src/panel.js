@@ -1,7 +1,7 @@
 // The escalation panel (spec §8): when the primary advisor is unsure — or the caller forces it —
 // convene 2+ INDEPENDENT advisors concurrently and surface their views.
 //
-// THE HONEST PART (spec §18): askup does NOT compute an agreement verdict over free text. Deciding
+// THE HONEST PART: askup does NOT compute an agreement verdict over free text. Deciding
 // whether two prose recommendations "agree" is not deterministic, and a cheap string/keyword check
 // would be a confident lie in exactly the place a caller is most likely to trust it. So:
 //   - with a `reconciler` configured -> a REAL model pass synthesizes the views and names the dissent

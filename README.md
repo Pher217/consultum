@@ -77,12 +77,31 @@ advisor: gemma3:4b (ollama)   curated: no   confidence: 75/100   sensitive: no
 | `14` | low confidence (recommendation is still printed) |
 | `15` | malformed advisor output |
 
+### Second opinion: the panel
+
+When one advisor isn't enough, configure `roles.panel` and pass `--panel`: every panelist is asked
+the same question **concurrently** and you get each view back.
+
+askup deliberately does **not** compute an "they agree" verdict over free text — deciding whether
+two prose recommendations agree isn't deterministic, and a cheap keyword check would be a confident
+lie exactly where you'd most trust it. So either you configure a `reconciler` model, which
+synthesizes the views and is instructed to **name the dissent** and lower its confidence when they
+diverge, or `agreement` stays `unassessed` and you read the views yourself. If every panelist fails,
+that's reported as *not convened* — never as an empty consensus.
+
+A panel also fires **automatically** on a low-confidence answer when one is configured. Set
+`policy.panel_auto: false` to require an explicit `--panel`.
+
 ### Cost
 
-A consult is **one advisor call**, plus **one curator call** if a curator is configured. Both are
-real calls to whatever model you've wired into your config — on a hosted provider (Anthropic,
-OpenAI, an OpenAI-compatible endpoint) this spends real money. Point `advisor`/`curator` at a local
-Ollama model to run for free.
+A consult is **one advisor call**, plus **one curator call** if a curator is configured. A panel
+adds **one call per panelist** (capped at 5), plus the reconciler if you configured one — so a
+panelled consult can be six or more billed requests from a single command. Both the panel and
+auto-panel are opt-in for that reason.
+
+These are real calls to whatever model you've wired into your config — on a hosted provider
+(Anthropic, OpenAI, an OpenAI-compatible endpoint) this spends real money. Point
+`advisor`/`curator`/`panel` at local Ollama models to run for free.
 
 ### Requirements
 

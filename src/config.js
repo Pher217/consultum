@@ -135,7 +135,7 @@ function normalizeConfig(raw, filename) {
   }
   // reconciler: optional single model that SYNTHESIZES the panel's views. Omit it and askup returns
   // the raw views with dissent surfaced — it will NOT fake an agreement verdict (free-text agreement
-  // detection is not deterministic; see spec §18).
+  // detection is not deterministic).
   let reconcilerName = null;
   if (roles.reconciler !== undefined && roles.reconciler !== null) {
     if (typeof roles.reconciler !== 'string') {
@@ -331,10 +331,15 @@ export function resolveAdvisorChain(config, { sensitive = false } = {}) {
 // Panel members eligible for this request, trust-filtered exactly like the advisor chain. May return
 // [] (no panel configured, or every panelist is untrusted on a sensitive request) — the caller then
 // simply doesn't convene one; a panel is never a hard requirement.
+// A panel fans out to one PAID call per panelist, so its size is a spend multiplier. Cap it: a
+// misconfigured (or hostile) config listing dozens of panelists would otherwise turn a single
+// consult into dozens of billed requests.
+export const MAX_PANELISTS = 5;
+
 export function resolvePanel(config, { sensitive = false } = {}) {
   const panel = (config.roles.panel || []).map((n) => config.models[n]);
-  if (!sensitive) return panel;
-  return panel.filter((m) => SENSITIVE_TRUST.has(m.trust));
+  const eligible = sensitive ? panel.filter((m) => SENSITIVE_TRUST.has(m.trust)) : panel;
+  return eligible.slice(0, MAX_PANELISTS);
 }
 
 // The reconciler model, or null. Sensitivity filters it like everything else: an untrusted reconciler
