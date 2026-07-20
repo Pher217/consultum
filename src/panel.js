@@ -69,13 +69,16 @@ export function correlationWarning(views) {
   return null;
 }
 
-// Build the reconciler prompt from the panel's views. Views are wrapped as untrusted data (they are
-// model output flowing into another model — same discipline as the advisory packet).
-export function buildReconcilerPrompt(question, views) {
-  const blocks = views
+// Build the reconciler prompt. The PRIMARY advisor's answer is included and labelled as such — it is
+// the opinion that triggered the panel, and reconciling the panelists while ignoring it would make
+// "reconciled" mean less than a reader reasonably assumes. Views are wrapped as untrusted data (they
+// are model output flowing into another model — same discipline as the advisory packet).
+export function buildReconcilerPrompt(question, views, primary = null) {
+  const all = primary ? [{ ...primary, primary: true }, ...views] : views;
+  const blocks = all
     .map(
       (v, i) =>
-        `### Advisor ${i + 1} — ${v.model} (confidence ${v.confidence})\n` +
+        `### Advisor ${i + 1} — ${v.model}${v.primary ? ' (PRIMARY — answered first; this panel was convened because of this answer)' : ''} (confidence ${v.confidence})\n` +
         `Recommended Approach:\n${v.recommendation}\n` +
         (v.risks ? `Risks:\n${v.risks}\n` : ''),
     )
@@ -91,9 +94,9 @@ export function buildReconcilerPrompt(question, views) {
 // but the failure MUST be reported, never silently degraded into "no reconciler configured". Those are
 // different states and conflating them hides a broken setup (caught live).
 // Returns { status: 'none' | 'reconciled' | 'failed', rec?, model?, error? }.
-export async function reconcile(reconciler, { question, views, timeoutMs, deps, parse }) {
+export async function reconcile(reconciler, { question, views, primary = null, timeoutMs, deps, parse }) {
   if (!reconciler || views.length === 0) return { status: 'none' };
-  const prompt = buildReconcilerPrompt(question, views);
+  const prompt = buildReconcilerPrompt(question, views, primary);
   const provider = createProvider(reconciler, deps);
   // Retry once on unparseable output, same discipline as the advisor ladder — small models often
   // miss the section contract on the first pass.
@@ -103,7 +106,14 @@ export async function reconcile(reconciler, { question, views, timeoutMs, deps, 
         system: RECONCILER_SYSTEM,
         timeoutMs,
       });
-      return { status: 'reconciled', rec: parse(out.text), model: reconciler.id, usage: out.usage ?? null };
+      return {
+        status: 'reconciled',
+        rec: parse(out.text),
+        model: reconciler.id,
+        usage: out.usage ?? null,
+        // Which opinions the synthesis actually weighed — so "reconciled" is auditable, not implied.
+        over: (primary ? [primary.model] : []).concat(views.map((v) => v.model)),
+      };
     } catch (err) {
       if (err instanceof AskupError && err.kind === KIND.USAGE) throw err;
       if (attempt === 1 || err.kind !== KIND.MALFORMED_OUTPUT) {

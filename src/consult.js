@@ -139,6 +139,16 @@ export async function consult({
     const synth = await reconcile(reconciler, {
       question: q,
       views,
+      // The primary advisor's answer is part of what gets reconciled — it is the opinion that
+      // triggered the panel. Reconciling only the panelists would make "reconciled" overstate
+      // what actually happened.
+      primary: {
+        model: model.id,
+        provider: model.provider,
+        recommendation: rec.recommendation,
+        confidence: rec.confidence,
+        risks: rec.risks ?? null,
+      },
       timeoutMs: advisorTimeoutMs,
       deps,
       parse: (t) => parseRecommendation(t, { panelThreshold: cfg.policy.panel_threshold }),
@@ -175,6 +185,8 @@ export async function consult({
           }
         : null,
       reconciledBy: synth.status === 'reconciled' ? synth.model : null,
+      // Auditable: exactly which opinions the synthesis weighed (primary first, then panelists).
+      reconciledOver: synth.status === 'reconciled' ? synth.over : null,
       reconcilerError: synth.status === 'failed' ? `${synth.model}: ${synth.error}` : null,
       correlation: correlationWarning([{ provider: model.provider }, ...views]),
       usage: views.map((v) => v.usage ?? null).concat(synth.usage ?? null),

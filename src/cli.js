@@ -115,7 +115,12 @@ export function formatHuman(rec) {
       }
       if (pn.agreement === 'reconciled') {
         const r = pn.reconciliation;
-        lines.push(`### Reconciled by ${pn.reconciledBy} — confidence ${r.confidence}`, r.recommendation, '');
+        lines.push(
+          `### Reconciled by ${pn.reconciledBy} — confidence ${r.confidence}`,
+          `(over: ${(pn.reconciledOver || []).join(', ')})`,
+          r.recommendation,
+          '',
+        );
         // The dissent is the whole point of a reconciliation; never drop it.
         if (r.dissent) lines.push('#### Dissent / alternatives across advisors', r.dissent, '');
         if (r.risks) lines.push('#### Risks (reconciled)', r.risks, '');

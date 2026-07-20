@@ -271,6 +271,39 @@ test('policy.panel_auto:false requires an explicit --panel (Fable M2 — auto fa
   }
 });
 
+test('the reconciliation weighs the PRIMARY advisor too, and says so (reconciledOver)', async () => {
+  // "reconciled" must not mean "reconciled the panelists while ignoring the answer that triggered
+  // the panel" — the primary is included, labelled, and the set is auditable.
+  process.env.ASKUP_TEST_PANEL_KEY = 'k';
+  const seenPrompts = [];
+  try {
+    const base = deps({
+      'adv-model': REC('the primary opinion', 40),
+      'panel-one': REC('one', 80),
+      'panel-two': REC('two', 70),
+      'recon-model': REC('synthesis', 75),
+    });
+    const d = {
+      ...base,
+      httpPostJson: async (url, body) => {
+        seenPrompts.push({ model: body.model, text: JSON.stringify(body.messages) });
+        return base.httpPostJson(url, body);
+      },
+    };
+    const rec = await consult({ question: 'q', panel: true, config: parseConfig(CFG), deps: d });
+
+    // the set actually reconciled is reported, primary first
+    assert.deepEqual(rec.panel.reconciledOver, ['adv-model', 'panel-one', 'panel-two']);
+    // and the primary's answer really was in the reconciler's prompt, flagged as primary
+    const reconCall = seenPrompts.find((p) => p.model === 'recon-model');
+    assert.ok(reconCall, 'reconciler was called');
+    assert.match(reconCall.text, /the primary opinion/, 'primary answer must reach the reconciler');
+    assert.match(reconCall.text, /PRIMARY/, 'primary must be labelled as such');
+  } finally {
+    delete process.env.ASKUP_TEST_PANEL_KEY;
+  }
+});
+
 test('a single-provider panel is flagged as correlated', () => {
   assert.match(
     correlationWarning([{ provider: 'ollama' }, { provider: 'ollama' }]),
