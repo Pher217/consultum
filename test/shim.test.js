@@ -28,7 +28,7 @@ test('askupTool returns { ok: true, ...rec } on success (packet maps to context)
 });
 
 test('askupTool never throws — a policy refusal comes back as { ok: false, error }', async () => {
-  const cfg = parseConfig('models:\n  sol: { provider: codex-cli, id: s, trust: untrusted }\nroles:\n  advisor: [sol]\n');
+  const cfg = parseConfig('models:\n  gpt: { provider: codex-cli, id: s, trust: untrusted }\nroles:\n  advisor: [gpt]\n');
   const res = await askupTool({ question: 'q', packet: 'p', sensitive: true }, { config: cfg, deps: okDeps });
   assert.equal(res.ok, false);
   assert.equal(res.error.kind, 'refused-by-policy');

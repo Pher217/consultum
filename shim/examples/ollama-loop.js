@@ -10,7 +10,7 @@
 import { askupTool, TOOL_SCHEMA } from 'askup'; // or: '../../src/index.js' from within this repo
 
 const OLLAMA = process.env.OLLAMA_BASE || 'http://localhost:11434';
-const WORKER_MODEL = process.env.WORKER_MODEL || 'kimi-k2.7-code:cloud';
+const WORKER_MODEL = process.env.WORKER_MODEL || 'llama3.1:8b';
 
 // Your worker's tools + the askup escalation tool.
 const tools = [/* ...your read_file/write_file/run_shell tools... */ TOOL_SCHEMA];

@@ -1,5 +1,5 @@
 // Best-effort secret redaction before any cross-model send (defence in depth — the caller is also
-// expected to redact). Ported verbatim from the hardened coding-structure implementation.
+// expected to redact). Ported from a hardened production implementation.
 //
 // SCOPE (see docs/threat-model.md, A4): this is best-effort against *accidental* leakage, NOT
 // adversarial encoding. base64/rot/split encodings defeat every regex. Sensitive workloads must be
@@ -15,8 +15,7 @@ export const SECRET_KEY_WORD =
   'TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|AUTHORIZATION|SESSION|COOKIE|BEARER|DATABASE_URL|DB_URL';
 
 // Redact + trim + take the last n chars — for embedding a subprocess's stderr (or an HTTP error
-// body) into an AskupError message without leaking a token that appeared there (Sol/Fable finding:
-// secrets in stderr flow into error strings and then into logs).
+// body) into an AskupError message without leaking a token that appeared there.
 export function redactedTail(text, n = 200) {
   return redactSecrets(String(text ?? '').trim()).slice(-n);
 }

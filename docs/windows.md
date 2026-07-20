@@ -9,13 +9,7 @@ worth knowing. The HTTP adapters are fully cross-platform.
 | `openai` / `openai-compatible` | ✅ works | Pure HTTP. Key from an env var. |
 | `anthropic-api` | ✅ works | Pure HTTP (Messages API). Key from an env var. |
 | `anthropic-cli` | ⚠️ needs `claude` on PATH | Prompt is fed via stdin (`runWithStdin`), which is cross-platform. Requires Claude Code installed and authed. |
-| `codex-cli` | ⚠️ needs `codex` on PATH + stdin note | The `/dev/null` stdin trick is POSIX; on Windows `askup` opens `NUL` instead (handled in `src/run.js`). Requires the Codex CLI installed and authed. |
-
-## The `/dev/null` → `NUL` detail
-
-`codex exec` hangs or returns empty when its stdin is an ordinary pipe — it needs a real, EOF'd
-stdin. On POSIX that is `/dev/null`; on Windows it is `NUL`. `runNoStdin()` picks the right one by
-`process.platform`, and falls back to Node's `'ignore'` stdio if neither can be opened.
+| `codex-cli` | ⚠️ needs `codex` on PATH | Prompt is fed via stdin (`codex exec -`, using `runWithStdin`), which is cross-platform. Requires the Codex CLI installed and authed. |
 
 ## Concurrency note (CLI-shelling adapters)
 

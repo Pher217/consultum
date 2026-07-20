@@ -67,11 +67,23 @@ export async function consult({
   const curatorModel = wantCurate ? resolveCurator(cfg, { sensitive: eff }) : null;
   let packet = null;
   let curatedBy = null;
+  // Distinguish "curation was never asked for" from "curation was asked for and did not happen".
+  // Falling back to the template is correct, but doing it invisibly contradicts this module's own
+  // rule of never silently downgrading — a user who configured a curator deserves to know it was
+  // skipped (untrusted for a sensitive request) or that it failed.
+  let curationNote = null;
+  if (wantCurate && !curatorModel) {
+    curationNote = eff
+      ? 'curator skipped: configured curator is untrusted and this request is sensitive'
+      : 'curator skipped: no curator resolved';
+  }
   if (curatorModel) {
     const curated = await curate(q, ctx, { provider: createProvider(curatorModel, deps), timeoutMs: curatorTimeoutMs });
     if (curated) {
-      packet = redactSecrets(curated); // re-scan the curated output (§10: redact twice)
+      packet = redactSecrets(curated); // re-scan the curated output (redact twice)
       curatedBy = curatorModel.id;
+    } else {
+      curationNote = `curator ${curatorModel.id} failed or returned nothing — used the deterministic template instead`;
     }
   }
   if (!packet) packet = buildTemplatePacket(q, ctx);
@@ -215,6 +227,10 @@ export async function consult({
 
   // 7. assemble the StructuredRecommendation with provenance (models used, curated y/n, usage).
   return {
+    // Machine consumers (the tool-loop shim, the --json CLI contract, any language wrapper) parse
+    // this object. Versioning it from the first release means a later field change is a negotiable
+    // migration rather than a silent break; adding the field afterwards would itself be the break.
+    schemaVersion: 1,
     problem: rec.problem ?? null,
     facts: rec.facts ?? null,
     assumptions: rec.assumptions ?? null,
@@ -235,6 +251,8 @@ export async function consult({
       advisorProvider: model.provider,
       curatorModel: curatedBy,
       curated: Boolean(curatedBy),
+      // null when curation was never requested; otherwise says why it did not happen.
+      curationNote,
       sensitive: eff,
       panelThreshold: cfg.policy.panel_threshold,
       usage: usage ?? null,
