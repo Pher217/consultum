@@ -19,8 +19,22 @@ Executor (any model/engine, stuck)
   -> Executor evaluates, implements the smallest safe fix, verifies
 ```
 
-Panel escalation (multiple advisors reconciled when confidence is low or `--panel` is passed) is
-a v0.2 feature. In v0.1, reliability comes from an **ordered availability fallback chain**, not a panel.
+Reliability comes first from an **ordered availability fallback chain** (first reachable advisor wins).
+
+**Panel escalation** adds a second opinion on top: pass `--panel`, or let it fire automatically when
+the advisor self-reports confidence below `panel_threshold`. Panelists (`roles.panel`) run
+**concurrently**, are trust-filtered exactly like the advisor, and a failing panelist is recorded
+without sinking the panel. Two deliberate honesty rules:
+
+- **askup does not judge whether the views agree.** Free-text agreement detection is not
+  deterministic, so with no `roles.reconciler` configured the panel reports `agreement: "unassessed"`
+  and shows every view — it will not manufacture a consensus verdict.
+- **A reconciler that fails is reported as `reconciler-failed`**, never silently downgraded to
+  "unassessed" — a broken synthesis model must not look like an absent one.
+
+Configure a `roles.reconciler` (a *capable* model — reconciling several views is harder than
+answering, and small models routinely miss the section contract) to get a real synthesis pass that
+names the dissent. A panel drawn from one provider family is flagged as `correlated`.
 
 ## Roles → models (config)
 

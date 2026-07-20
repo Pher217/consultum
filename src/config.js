@@ -122,6 +122,27 @@ function normalizeConfig(raw, filename) {
   for (const n of advisorNames) {
     if (!models[n]) throw new AskupError(KIND.USAGE, `config ${filename}: roles.advisor references unknown model '${n}'`);
   }
+  // panel: optional ordered list of models convened for a second opinion (v0.2). Ideally from
+  // DIFFERENT provider families — a panel of one family gives correlated answers, which is the
+  // opposite of the point. consult() warns when it detects a single-provider panel.
+  const panelNames = toNameArray(roles.panel);
+  for (const n of panelNames) {
+    if (!models[n]) throw new AskupError(KIND.USAGE, `config ${filename}: roles.panel references unknown model '${n}'`);
+  }
+  // reconciler: optional single model that SYNTHESIZES the panel's views. Omit it and askup returns
+  // the raw views with dissent surfaced — it will NOT fake an agreement verdict (free-text agreement
+  // detection is not deterministic; see spec §18).
+  let reconcilerName = null;
+  if (roles.reconciler !== undefined && roles.reconciler !== null) {
+    if (typeof roles.reconciler !== 'string') {
+      throw new AskupError(KIND.USAGE, `config ${filename}: roles.reconciler must be a single model name or omitted`);
+    }
+    if (!models[roles.reconciler]) {
+      throw new AskupError(KIND.USAGE, `config ${filename}: roles.reconciler references unknown model '${roles.reconciler}'`);
+    }
+    reconcilerName = roles.reconciler;
+  }
+
   // curator: optional single model name (omit -> deterministic template packet builder).
   let curatorName = null;
   if (roles.curator !== undefined && roles.curator !== null) {
@@ -144,7 +165,7 @@ function normalizeConfig(raw, filename) {
     }
   }
 
-  return { models, roles: { advisor: advisorNames, curator: curatorName }, policy };
+  return { models, roles: { advisor: advisorNames, curator: curatorName, panel: panelNames, reconciler: reconcilerName }, policy };
 }
 
 // Strict policy validation. A mistyped policy value must be a config error, never silently coerced —
@@ -301,6 +322,24 @@ export function resolveAdvisorChain(config, { sensitive = false } = {}) {
   const chain = config.roles.advisor.map((n) => config.models[n]);
   if (!sensitive) return chain;
   return chain.filter((m) => SENSITIVE_TRUST.has(m.trust));
+}
+
+// Panel members eligible for this request, trust-filtered exactly like the advisor chain. May return
+// [] (no panel configured, or every panelist is untrusted on a sensitive request) — the caller then
+// simply doesn't convene one; a panel is never a hard requirement.
+export function resolvePanel(config, { sensitive = false } = {}) {
+  const panel = (config.roles.panel || []).map((n) => config.models[n]);
+  if (!sensitive) return panel;
+  return panel.filter((m) => SENSITIVE_TRUST.has(m.trust));
+}
+
+// The reconciler model, or null. Sensitivity filters it like everything else: an untrusted reconciler
+// is dropped on a sensitive request (its input is the panel's full recommendations).
+export function resolveReconciler(config, { sensitive = false } = {}) {
+  if (!config.roles.reconciler) return null;
+  const m = config.models[config.roles.reconciler];
+  if (sensitive && !SENSITIVE_TRUST.has(m.trust)) return null;
+  return m;
 }
 
 // The curator model for this request, or null (=> deterministic template packet). A sensitive
