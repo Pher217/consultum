@@ -240,11 +240,13 @@ export async function runDoctor({ flags, config, out, err, probe = defaultProbe 
   const statusByName = {};
   let sawEgressBlock = false;
   let sawMissingModel = false;
+  let sawOkUnverified = false;
   for (const [name, m] of Object.entries(cfg.models)) {
     const s = await probe(m);
     statusByName[name] = s;
     if (s.status === 'egress-blocked') sawEgressBlock = true;
     if (s.status === 'model-missing') sawMissingModel = true;
+    if (s.status === 'ok-unverified') sawOkUnverified = true;
     out(`  ${name.padEnd(10)} ${m.provider.padEnd(18)} ${m.id.padEnd(22)} trust=${m.trust.padEnd(9)} ${String(s.status).padEnd(14)} ${s.detail || ''}`);
   }
   if (sawEgressBlock) {
@@ -257,6 +259,11 @@ export async function runDoctor({ flags, config, out, err, probe = defaultProbe 
     out('  (!) model-missing: the host is up but that model is not pulled. Run the `ollama pull`');
     out('      shown above, or point the config at a tag you already have (`ollama list`).');
   }
+  if (sawOkUnverified) {
+    out('');
+    out('  (!) ok-unverified: reachable and usable, but the model id itself was not validated — a wrong');
+    out('      or retired id will fail at consult time, not here. Verify the id against the provider.');
+  }
   out('');
   out('resolved roles:');
   const normalChain = resolveAdvisorChain(cfg, { sensitive: false });
@@ -267,7 +274,9 @@ export async function runDoctor({ flags, config, out, err, probe = defaultProbe 
 
   // Exit non-zero when no advisor in the normal chain is usable (reachable + locally authed), so a
   // wrapper/CI can detect a broken setup. This is distinct from a sensitive-policy refusal.
-  const usable = normalChain.some((m) => statusByName[m.name]?.status === 'ok');
+  // 'ok-unverified' counts as usable — the host/binary is reachable, only the exact model id is
+  // unverified, which is a real-but-different risk (see the footnote above), not an unusable setup.
+  const usable = normalChain.some((m) => isUsable(statusByName[m.name]?.status));
   if (!usable) {
     out('');
     out('  (!) no usable advisor in the normal chain — fix auth/egress above before consulting.');
@@ -283,9 +292,10 @@ export async function runDoctor({ flags, config, out, err, probe = defaultProbe 
 // keys would add a real attack surface (DNS rebinding / CSRF against localhost) to a tool whose
 // whole job is handling secrets carefully. See docs/architecture.md.
 export async function runInitInteractive({ flags, out, err, detect = defaultDetect, ask, cwd = process.cwd(), writeFile = fs.writeFileSync, exists = fs.existsSync, mkdir = fs.mkdirSync }) {
-  const detected = detect();
+  const detected = await detect({ sandbox: Boolean(flags.sandbox) });
   out('consultum init — interactive. Enter to accept the [default]; Ctrl-C to abort.');
-  out(`detected on PATH: ${Object.entries(detected).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}`);
+  const detectedProviderKeys = ['claude', 'codex', 'ollama'];
+  out(`detected on PATH: ${detectedProviderKeys.filter((k) => detected[k]).join(', ') || 'none'}`);
   out('');
 
   const models = [];
@@ -306,10 +316,10 @@ export async function runInitInteractive({ flags, out, err, detect = defaultDete
 
   if (detected.claude) await addModel('claude', 'Claude Code CLI', 'anthropic-cli', 'claude-opus-4-8', 'trusted', 'uses the CLI login');
   if (detected.codex) await addModel('codex', 'Codex CLI', 'codex-cli', 'gpt-5-codex', 'untrusted', 'read-capable agent, NOT no-tools');
-  if (detected.ollama) await addModel('local', 'Ollama (local)', 'ollama', 'llama3.1:8b', 'local', 'localhost, no key');
+  if (detected.ollama) await addModel('local', 'Ollama (local)', 'ollama', detected.ollamaModel || 'llama3.1:8b', 'local', 'localhost, no key');
   if (!models.length) {
     out('Nothing detected — adding an Ollama entry you can edit.');
-    models.push('  local: { provider: ollama, id: llama3.1:8b, trust: local }');
+    models.push(`  local: { provider: ollama, id: ${detected.ollamaModel || 'llama3.1:8b'}, trust: local }`);
     advisor.push('local');
   }
 
@@ -318,7 +328,8 @@ export async function runInitInteractive({ flags, out, err, detect = defaultDete
 
   const content = [
     '# consultum config. Secrets are NEVER stored here — models reference env vars only.',
-    '# `consultum doctor` verifies each model is reachable and (for Ollama) actually pulled.',
+    '# `consultum doctor` checks reachability + local auth; it confirms the exact model id only for',
+    '# locally-pulled Ollama tags — anything else reports ok-unverified (usable, id not confirmed).',
     '# trust: local | trusted | untrusted (sensitive => trusted/local only).',
     'models:',
     ...models,
@@ -347,8 +358,8 @@ export async function runInitInteractive({ flags, out, err, detect = defaultDete
   return EXIT.OK;
 }
 
-export function runInit({ flags, out, err, detect = defaultDetect, cwd = process.cwd(), writeFile = fs.writeFileSync, exists = fs.existsSync, mkdir = fs.mkdirSync }) {
-  const detected = detect();
+export async function runInit({ flags, out, err, detect = defaultDetect, cwd = process.cwd(), writeFile = fs.writeFileSync, exists = fs.existsSync, mkdir = fs.mkdirSync }) {
+  const detected = await detect({ sandbox: Boolean(flags.sandbox) });
   const content = generateStarterConfig(detected, { sandbox: Boolean(flags.sandbox) });
   if (flags.print) {
     out(content);
@@ -373,7 +384,8 @@ export function runInit({ flags, out, err, detect = defaultDetect, cwd = process
     out('IMPORTANT: keep this config OUTSIDE any worker-writable dir — set CONSULTUM_CONFIG to a path a');
     out('worker cannot write (threat-model A7). See docs/sandboxed-callers.md.');
   } else {
-    out(`detected providers: ${Object.entries(detected).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}`);
+    const providerKeys = ['claude', 'codex', 'ollama'];
+    out(`detected providers: ${providerKeys.filter((k) => detected[k]).join(', ') || 'none'}`);
   }
   out('next: `consultum doctor` to verify, then pipe a question into `consultum consult`.');
   return EXIT.OK;
@@ -392,7 +404,9 @@ export function generateStarterConfig(detected, { sandbox = false } = {}) {
     advisor.push('codex');
   }
   if (detected.ollama) {
-    models.push('  local:  { provider: ollama,        id: llama3.1:8b,      trust: local }     # localhost, no key');
+    const id = detected.ollamaModel || 'llama3.1:8b';
+    const hint = detected.ollamaModel ? '# localhost, no key — largest local tag found by `init`' : '# localhost, no key';
+    models.push(`  local:  { provider: ollama,        id: ${id},      trust: local }     ${hint}`);
     if (advisor.length === 0) advisor.push('local');
   }
   if (models.length === 0) {
@@ -403,7 +417,8 @@ export function generateStarterConfig(detected, { sandbox = false } = {}) {
   return [
     '# consultum config. Secrets are NEVER stored here — models reference env vars only.',
     '# Model ids below are EXAMPLES — change them to models you actually have.',
-    '# `consultum doctor` tells you which are reachable and (for Ollama) actually pulled.',
+    '# `consultum doctor` tells you which are reachable; it confirms the exact model id only for',
+    '# locally-pulled Ollama tags — anything else reports ok-unverified (usable, id not confirmed).',
     '# Reference: https://github.com/Pher217/consultum#docs',
     '# trust: local | trusted | untrusted (sensitive => trusted/local only).',
     'models:',
@@ -450,9 +465,12 @@ function emitError(e, flags, err) {
 }
 
 // Classify a model's readiness WITHOUT sending its credential. Status is one of:
-// ok | not-authed | egress-blocked | dns-fail | not-on-path | unknown. HTTP reachability is checked
-// with an UNauthenticated request (any HTTP response = egress works); auth is checked by LOCAL
-// PRESENCE only (env set, or credential file exists) — never by sending the key.
+// ok | ok-unverified | not-authed | egress-blocked | dns-fail | not-on-path | unknown. HTTP
+// reachability is checked with an UNauthenticated request (any HTTP response = egress works); auth is
+// checked by LOCAL PRESENCE only (env set, or credential file exists) — never by sending the key.
+// 'ok-unverified' means reachable/usable but the exact model id was NOT confirmed against the
+// provider (CLI adapters, cloud Ollama tags, or an Ollama host that didn't return a tag list) — see
+// isUsable() and the runDoctor footnote below.
 async function defaultProbe(model) {
   if (model.provider === 'ollama') {
     const base = (model.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
@@ -482,7 +500,7 @@ async function ollamaStatus(base, id) {
   let data;
   try {
     const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(2000) });
-    if (!res.ok) return { status: 'ok', detail: `host reachable (HTTP ${res.status} from /api/tags — model not verified)` };
+    if (!res.ok) return { status: 'ok-unverified', detail: `host reachable (HTTP ${res.status} from /api/tags — model not verified)` };
     data = await res.json();
   } catch (e) {
     const msg = String(e?.message || e);
@@ -490,10 +508,10 @@ async function ollamaStatus(base, id) {
     return { status: 'egress-blocked', detail: 'unreachable (timeout/refused — is `ollama serve` running?)' };
   }
 
-  if (/:cloud$/.test(id)) return { status: 'ok', detail: 'host reachable; cloud tag (availability not verifiable locally)' };
+  if (/:cloud$/.test(id)) return { status: 'ok-unverified', detail: 'host reachable; cloud tag (availability not verifiable locally)' };
 
   const tags = Array.isArray(data?.models) ? data.models.map((m) => m?.name).filter(Boolean) : [];
-  if (!tags.length) return { status: 'ok', detail: 'host reachable (no tag list returned — model not verified)' };
+  if (!tags.length) return { status: 'ok-unverified', detail: 'host reachable (no tag list returned — model not verified)' };
   // Ollama reports bare names as `name:latest`; accept either spelling.
   const wanted = id.includes(':') ? id : `${id}:latest`;
   if (tags.includes(id) || tags.includes(wanted)) return { status: 'ok', detail: 'host reachable, model pulled' };
@@ -530,12 +548,22 @@ async function httpAuthedStatus(model, base, envName, reachPath) {
   return { status: 'ok', detail: 'reachable, credential present (not sent)' };
 }
 
-// CLI adapters: on PATH? credential locally present? We cannot verify auth without running it, so a
-// binary on PATH is reported 'ok' (auth may come from the tool's own login/keychain).
+// CLI adapters: on PATH? credential locally present? We cannot verify auth without running it, and we
+// never invoke the CLI just to check the model id, so a binary on PATH is reported 'ok-unverified' —
+// reachable and usable, but the configured model id itself was never validated against the provider.
 function cliStatus(cmd, model, tokenEnv) {
   if (!onPath(cmd)) return { status: 'not-on-path', detail: `${cmd} not on PATH` };
   const cred = tokenEnv && (process.env[tokenEnv] || credentialPresent(model, tokenEnv));
-  return { status: 'ok', detail: cred ? 'on PATH, token present' : "on PATH (auth via the tool's own login if no token_file)" };
+  return {
+    status: 'ok-unverified',
+    detail: cred ? 'on PATH, token present (model id not verified)' : "on PATH (auth via the tool's own login if no token_file; model id not verified)",
+  };
+}
+
+// 'ok' and 'ok-unverified' are both usable — the difference is whether the exact model id was
+// confirmed against the provider (ok) or only the host/binary was found reachable (ok-unverified).
+function isUsable(status) {
+  return status === 'ok' || status === 'ok-unverified';
 }
 
 function xdgConfigHome() {
@@ -557,12 +585,48 @@ function onPath(cmd) {
   return false;
 }
 
-function defaultDetect() {
+// Detection is used by both `init` and `init --interactive` to scaffold a config the user doesn't
+// have to hand-edit before `doctor` goes green. For Ollama specifically, a PATH check alone isn't
+// enough — the starter config also needs a model id the user actually has pulled, or `doctor` reports
+// model-missing on the very first run. `--sandbox` must never make this network call (no egress there).
+async function defaultDetect({ sandbox = false } = {}) {
+  const ollama = onPath('ollama');
   return {
     claude: onPath('claude'),
     codex: onPath('codex'),
-    ollama: onPath('ollama'),
+    ollama,
+    ollamaModel: ollama && !sandbox ? await pickOllamaTag() : null,
   };
+}
+
+// Picks the tag most likely to be a capable general-purpose local model: excludes `:cloud` tags
+// (those aren't "local" in the sense init cares about) and embedding models (useless as an advisor),
+// then takes the largest by size as a heuristic for capability. Never throws — a failed/timed-out
+// probe or an empty list just means the caller falls back to the placeholder id.
+async function pickOllamaTag(fetchImpl = fetch) {
+  try {
+    // Honour OLLAMA_HOST — a user who moved the daemon off the default port would otherwise get the
+    // placeholder id back and hit `model-missing` on their first `doctor`, which is the exact
+    // first-run friction this detection exists to remove.
+    const host = (process.env.OLLAMA_HOST || 'http://localhost:11434').replace(/\/$/, '');
+    const base = /^https?:\/\//.test(host) ? host : `http://${host}`;
+    const res = await fetchImpl(`${base}/api/tags`, { signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const models = Array.isArray(data?.models) ? data.models : [];
+    const candidates = models.filter((m) => {
+      const name = String(m?.name || '');
+      if (!name) return false;
+      if (/:cloud$/.test(name)) return false;
+      if (/^bge/i.test(name) || /embed/i.test(name)) return false;
+      return true;
+    });
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => (Number(b?.size) || 0) - (Number(a?.size) || 0));
+    return candidates[0].name;
+  } catch {
+    return null;
+  }
 }
 
 function sanitize(s) {
@@ -588,4 +652,4 @@ function writeState(p, state) {
   }
 }
 
-export { USAGE };
+export { USAGE, cliStatus, ollamaStatus, isUsable, defaultDetect, pickOllamaTag };

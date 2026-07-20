@@ -90,7 +90,7 @@ async function main() {
         }
         return;
       }
-      process.exitCode = runInit({ flags, out, err });
+      process.exitCode = await runInit({ flags, out, err });
       return;
     default:
       err(`consultum: unknown command '${command}'\n\n${USAGE}`);

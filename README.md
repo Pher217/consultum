@@ -32,7 +32,9 @@ Any engine can open it:
 ```bash
 npm install -g consultum
 consultum init            # detects claude/codex/ollama, writes ./consultum.yaml
-consultum doctor          # verifies each configured model is reachable AND available
+consultum doctor          # checks reachability + local auth for every provider; verifies the exact
+                          # model id only for locally-pulled Ollama tags — everything else reports
+                          # ok-unverified (reachable/usable, id not confirmed against the provider)
 echo "Why is my nightly job dropping rows?" | consultum consult
 ```
 
