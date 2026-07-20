@@ -20,37 +20,9 @@ But there's a gap: **the workers can't talk to each other.** A Claude session ca
 
 ## How it works
 
-```mermaid
-flowchart TD
-    User([User]) --> Opus
+![The advisory channel — cheap workers ask up to an Opus or Sol advisor through a high-context curator that redacts and compresses](docs/advisory-channel.svg)
 
-    Opus["<b>Opus</b> — orchestrator<br/><small>drives · owns every decision · writes the spec</small>"]
-    Opus -->|clear spec| Workers
-    Workers -->|result| Verify
-    Verify -->|approved / redo| Opus
-
-    Workers["<b>Workers</b><br/><small>Sonnet · Kimi · GLM · Qwen · Codex — cheap, middle-tier, isolated</small>"]
-    Verify{{"<b>Verify</b><br/><small>orchestrator + reviewers</small>"}}
-
-    %% advisory channel — opens only when a worker is stuck
-    Workers -. "stuck · in doubt · high-risk" .-> Curator
-    Curator -. "clean packet" .-> Advisor
-    Advisor -. "read-only advice" .-> Workers
-
-    Curator["<b>Curator</b><br/><small>compress context · redact secrets</small>"]
-    Advisor["<b>Advisor</b><br/><small>stronger model → panel if unsure</small>"]
-
-    classDef orch fill:#1e3a5f,stroke:#4a90d9,stroke-width:2px,color:#fff;
-    classDef pool fill:#2d2d2d,stroke:#888,color:#eee;
-    classDef channel fill:#3d2a4d,stroke:#a678d0,stroke-width:2px,color:#fff;
-    classDef verify fill:#1f3d2f,stroke:#5cb87a,color:#fff;
-    class Opus orch;
-    class Workers pool;
-    class Curator,Advisor channel;
-    class Verify verify;
-```
-
-**Solid lines** are the everyday flow — delegate and verify, every task. **Dashed lines** are the advisory channel — it opens *only when a worker is stuck.*
+Cheap workers do the typing. When one is **stuck**, it asks up: a high-context **curator** redacts secrets and compresses the mess into a clean packet, then a stronger **advisor** (Opus / Sol) reviews it **read-only** and answers. The worker keeps going — the decision never leaves the orchestrator.
 
 Any engine can open it:
 - a **Claude** worker via a subagent,
