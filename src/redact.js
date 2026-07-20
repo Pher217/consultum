@@ -15,7 +15,7 @@ export const SECRET_KEY_WORD =
   'TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|AUTHORIZATION|SESSION|COOKIE|BEARER|DATABASE_URL|DB_URL';
 
 // Redact + trim + take the last n chars — for embedding a subprocess's stderr (or an HTTP error
-// body) into an AskupError message without leaking a token that appeared there.
+// body) into an ConsultumError message without leaking a token that appeared there.
 export function redactedTail(text, n = 200) {
   return redactSecrets(String(text ?? '').trim()).slice(-n);
 }

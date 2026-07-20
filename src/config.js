@@ -1,6 +1,6 @@
 // Config: discovery, parse, validation, env overrides, and role resolution.
 //
-// Everything askup does is expressed as ROLES (advisor, curator) mapped to MODEL ENTRIES. A model
+// Everything consultum does is expressed as ROLES (advisor, curator) mapped to MODEL ENTRIES. A model
 // entry declares its provider (adapter), model id, and a user-assigned TRUST class. No model ids
 // live in code — they live only in config. Sensitivity FILTERS a role's candidates by trust; there
 // are no separate `*_sensitive` roles.
@@ -9,7 +9,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import YAML from 'yaml';
-import { AskupError, KIND } from './errors.js';
+import { ConsultumError, KIND } from './errors.js';
 
 export const TRUST_VALUES = ['local', 'trusted', 'untrusted'];
 // A sensitive request may only reach these trust classes — never a third-party (`untrusted`).
@@ -37,16 +37,16 @@ const POLICY_DEFAULTS = {
   sensitive_paths: [], // optional globs; a matching sourcePath forces a request sensitive
 };
 
-// Discovery order (highest priority first): $ASKUP_CONFIG, then ./askup.{yaml,yml,json},
-// then $XDG_CONFIG_HOME/askup/config.{yaml,yml,json}, then ~/.askup.{yaml,yml,json}.
+// Discovery order (highest priority first): $CONSULTUM_CONFIG, then ./consultum.{yaml,yml,json},
+// then $XDG_CONFIG_HOME/consultum/config.{yaml,yml,json}, then ~/.consultum.{yaml,yml,json}.
 export function candidateConfigPaths({ cwd = process.cwd(), env = process.env, home = os.homedir() } = {}) {
   const paths = [];
-  if (env.ASKUP_CONFIG) paths.push(env.ASKUP_CONFIG);
+  if (env.CONSULTUM_CONFIG) paths.push(env.CONSULTUM_CONFIG);
   const exts = ['yaml', 'yml', 'json'];
-  for (const ext of exts) paths.push(path.join(cwd, `askup.${ext}`));
+  for (const ext of exts) paths.push(path.join(cwd, `consultum.${ext}`));
   const xdg = env.XDG_CONFIG_HOME || path.join(home, '.config');
-  for (const ext of exts) paths.push(path.join(xdg, 'askup', `config.${ext}`));
-  for (const ext of exts) paths.push(path.join(home, `.askup.${ext}`));
+  for (const ext of exts) paths.push(path.join(xdg, 'consultum', `config.${ext}`));
+  for (const ext of exts) paths.push(path.join(home, `.consultum.${ext}`));
   return paths;
 }
 
@@ -67,10 +67,10 @@ export function parseConfig(text, filename = '<config>') {
   try {
     raw = YAML.parse(text);
   } catch (err) {
-    throw new AskupError(KIND.USAGE, `could not parse config ${filename}: ${err.message}`);
+    throw new ConsultumError(KIND.USAGE, `could not parse config ${filename}: ${err.message}`);
   }
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new AskupError(KIND.USAGE, `config ${filename} must be a YAML/JSON mapping`);
+    throw new ConsultumError(KIND.USAGE, `config ${filename} must be a YAML/JSON mapping`);
   }
   return normalizeConfig(raw, filename);
 }
@@ -78,23 +78,23 @@ export function parseConfig(text, filename = '<config>') {
 function normalizeConfig(raw, filename) {
   const models = {};
   if (!raw.models || typeof raw.models !== 'object' || Array.isArray(raw.models)) {
-    throw new AskupError(KIND.USAGE, `config ${filename}: 'models' mapping is required`);
+    throw new ConsultumError(KIND.USAGE, `config ${filename}: 'models' mapping is required`);
   }
   for (const [name, spec] of Object.entries(raw.models)) {
     if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
-      throw new AskupError(KIND.USAGE, `config ${filename}: model '${name}' must be a mapping`);
+      throw new ConsultumError(KIND.USAGE, `config ${filename}: model '${name}' must be a mapping`);
     }
     if (!KNOWN_PROVIDERS.has(spec.provider)) {
-      throw new AskupError(
+      throw new ConsultumError(
         KIND.USAGE,
         `config ${filename}: model '${name}' has unknown provider '${spec.provider}' (known: ${[...KNOWN_PROVIDERS].join(', ')})`,
       );
     }
     if (typeof spec.id !== 'string' || !spec.id.trim()) {
-      throw new AskupError(KIND.USAGE, `config ${filename}: model '${name}' needs a non-empty 'id'`);
+      throw new ConsultumError(KIND.USAGE, `config ${filename}: model '${name}' needs a non-empty 'id'`);
     }
     if (!TRUST_VALUES.includes(spec.trust)) {
-      throw new AskupError(
+      throw new ConsultumError(
         KIND.USAGE,
         `config ${filename}: model '${name}' needs trust one of ${TRUST_VALUES.join(' | ')} (got '${spec.trust}')`,
       );
@@ -121,28 +121,28 @@ function normalizeConfig(raw, filename) {
   // advisor: string | string[] -> ordered array of model names (the fallback chain).
   const advisorNames = toNameArray(roles.advisor);
   if (advisorNames.length === 0) {
-    throw new AskupError(KIND.USAGE, `config ${filename}: roles.advisor must name at least one model`);
+    throw new ConsultumError(KIND.USAGE, `config ${filename}: roles.advisor must name at least one model`);
   }
   for (const n of advisorNames) {
-    if (!models[n]) throw new AskupError(KIND.USAGE, `config ${filename}: roles.advisor references unknown model '${n}'`);
+    if (!models[n]) throw new ConsultumError(KIND.USAGE, `config ${filename}: roles.advisor references unknown model '${n}'`);
   }
   // panel: optional ordered list of models convened for a second opinion (v0.2). Ideally from
   // DIFFERENT provider families — a panel of one family gives correlated answers, which is the
   // opposite of the point. consult() warns when it detects a single-provider panel.
   const panelNames = toNameArray(roles.panel);
   for (const n of panelNames) {
-    if (!models[n]) throw new AskupError(KIND.USAGE, `config ${filename}: roles.panel references unknown model '${n}'`);
+    if (!models[n]) throw new ConsultumError(KIND.USAGE, `config ${filename}: roles.panel references unknown model '${n}'`);
   }
-  // reconciler: optional single model that SYNTHESIZES the panel's views. Omit it and askup returns
+  // reconciler: optional single model that SYNTHESIZES the panel's views. Omit it and consultum returns
   // the raw views with dissent surfaced — it will NOT fake an agreement verdict (free-text agreement
   // detection is not deterministic).
   let reconcilerName = null;
   if (roles.reconciler !== undefined && roles.reconciler !== null) {
     if (typeof roles.reconciler !== 'string') {
-      throw new AskupError(KIND.USAGE, `config ${filename}: roles.reconciler must be a single model name or omitted`);
+      throw new ConsultumError(KIND.USAGE, `config ${filename}: roles.reconciler must be a single model name or omitted`);
     }
     if (!models[roles.reconciler]) {
-      throw new AskupError(KIND.USAGE, `config ${filename}: roles.reconciler references unknown model '${roles.reconciler}'`);
+      throw new ConsultumError(KIND.USAGE, `config ${filename}: roles.reconciler references unknown model '${roles.reconciler}'`);
     }
     reconcilerName = roles.reconciler;
   }
@@ -151,10 +151,10 @@ function normalizeConfig(raw, filename) {
   let curatorName = null;
   if (roles.curator !== undefined && roles.curator !== null) {
     if (typeof roles.curator !== 'string') {
-      throw new AskupError(KIND.USAGE, `config ${filename}: roles.curator must be a single model name or omitted`);
+      throw new ConsultumError(KIND.USAGE, `config ${filename}: roles.curator must be a single model name or omitted`);
     }
     if (!models[roles.curator]) {
-      throw new AskupError(KIND.USAGE, `config ${filename}: roles.curator references unknown model '${roles.curator}'`);
+      throw new ConsultumError(KIND.USAGE, `config ${filename}: roles.curator references unknown model '${roles.curator}'`);
     }
     curatorName = roles.curator;
   }
@@ -162,7 +162,7 @@ function normalizeConfig(raw, filename) {
   const policy = { ...POLICY_DEFAULTS };
   if (raw.policy !== undefined) {
     if (typeof raw.policy !== 'object' || raw.policy === null || Array.isArray(raw.policy)) {
-      throw new AskupError(KIND.USAGE, `config ${filename}: 'policy' must be a mapping`);
+      throw new ConsultumError(KIND.USAGE, `config ${filename}: 'policy' must be a mapping`);
     }
     for (const key of Object.keys(POLICY_DEFAULTS)) {
       if (raw.policy[key] !== undefined) policy[key] = validatePolicyValue(key, raw.policy[key], filename);
@@ -186,23 +186,23 @@ const INT_POLICY = {
 function validatePolicyValue(key, value, filename) {
   if (BOOL_POLICY.has(key)) {
     if (typeof value !== 'boolean') {
-      throw new AskupError(KIND.USAGE, `config ${filename}: policy.${key} must be a boolean, got ${JSON.stringify(value)}`);
+      throw new ConsultumError(KIND.USAGE, `config ${filename}: policy.${key} must be a boolean, got ${JSON.stringify(value)}`);
     }
     return value;
   }
   if (key in INT_POLICY) {
     if (typeof value !== 'number' || !Number.isInteger(value)) {
-      throw new AskupError(KIND.USAGE, `config ${filename}: policy.${key} must be an integer, got ${JSON.stringify(value)}`);
+      throw new ConsultumError(KIND.USAGE, `config ${filename}: policy.${key} must be an integer, got ${JSON.stringify(value)}`);
     }
     const [min, max] = INT_POLICY[key];
     if (value < min || value > max) {
-      throw new AskupError(KIND.USAGE, `config ${filename}: policy.${key} must be in [${min}, ${max}], got ${value}`);
+      throw new ConsultumError(KIND.USAGE, `config ${filename}: policy.${key} must be in [${min}, ${max}], got ${value}`);
     }
     return value;
   }
   // sensitive_paths
   if (!Array.isArray(value) || !value.every((v) => typeof v === 'string')) {
-    throw new AskupError(KIND.USAGE, `config ${filename}: policy.sensitive_paths must be a list of strings`);
+    throw new ConsultumError(KIND.USAGE, `config ${filename}: policy.sensitive_paths must be a list of strings`);
   }
   return value;
 }
@@ -216,13 +216,13 @@ const ALLOWED_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 function normalizeTools(tools, name, filename) {
   if (tools === undefined || tools === null) return null;
   if (typeof tools !== 'object' || Array.isArray(tools)) {
-    throw new AskupError(KIND.USAGE, `config ${filename}: model '${name}' tools must be a mapping { allow: [...], dirs: [...] }`);
+    throw new ConsultumError(KIND.USAGE, `config ${filename}: model '${name}' tools must be a mapping { allow: [...], dirs: [...] }`);
   }
   const allow = Array.isArray(tools.allow) ? tools.allow.map(String) : [];
   const dirs = Array.isArray(tools.dirs) ? tools.dirs.map(String) : [];
   for (const t of allow) {
     if (!ALLOWED_TOOLS.has(t)) {
-      throw new AskupError(
+      throw new ConsultumError(
         KIND.USAGE,
         `config ${filename}: model '${name}' tool '${t}' is not permitted — only read-only filesystem tools (${[...ALLOWED_TOOLS].join(', ')}) may be granted`,
       );
@@ -230,7 +230,7 @@ function normalizeTools(tools, name, filename) {
   }
   if (allow.length > 0 && dirs.length === 0) {
     // filesystem tools are opt-in AND directory-scoped. Refuse tools without a scope.
-    throw new AskupError(
+    throw new ConsultumError(
       KIND.USAGE,
       `config ${filename}: model '${name}' grants tools (${allow.join(',')}) but no 'dirs' scope — directory scope is required`,
     );
@@ -245,14 +245,14 @@ function toNameArray(v) {
   return [];
 }
 
-// ASKUP_MODEL_<NAME>_ID / _BASE_URL override the config (12-factor / CI). Secrets are never here —
+// CONSULTUM_MODEL_<NAME>_ID / _BASE_URL override the config (12-factor / CI). Secrets are never here —
 // only the id and endpoint. NAME is the model key uppercased with non-alphanumerics as underscores.
 export function applyEnvOverrides(config, env = process.env) {
   for (const [name, model] of Object.entries(config.models)) {
     const key = name.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-    const id = env[`ASKUP_MODEL_${key}_ID`];
+    const id = env[`CONSULTUM_MODEL_${key}_ID`];
     if (id) model.id = id;
-    const baseUrl = env[`ASKUP_MODEL_${key}_BASE_URL`];
+    const baseUrl = env[`CONSULTUM_MODEL_${key}_BASE_URL`];
     if (baseUrl) model.baseUrl = baseUrl;
   }
   return config;
@@ -261,16 +261,16 @@ export function applyEnvOverrides(config, env = process.env) {
 export function loadConfig({ cwd, env = process.env, home, configPath } = {}) {
   const resolved = configPath ?? discoverConfigPath({ cwd, env, home });
   if (!resolved) {
-    throw new AskupError(
+    throw new ConsultumError(
       KIND.USAGE,
-      'no askup config found. Run `askup init` to scaffold one (searched ./askup.yaml, $XDG_CONFIG_HOME/askup/config.yaml, ~/.askup.yaml).',
+      'no consultum config found. Run `consultum init` to scaffold one (searched ./consultum.yaml, $XDG_CONFIG_HOME/consultum/config.yaml, ~/.consultum.yaml).',
     );
   }
   let text;
   try {
     text = fs.readFileSync(resolved, 'utf8');
   } catch (err) {
-    throw new AskupError(KIND.USAGE, `could not read config ${resolved}: ${err.message}`);
+    throw new ConsultumError(KIND.USAGE, `could not read config ${resolved}: ${err.message}`);
   }
   const config = parseConfig(text, resolved);
   applyEnvOverrides(config, env);

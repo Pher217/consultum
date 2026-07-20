@@ -203,9 +203,9 @@ test('runInit --print emits a starter config without writing', () => {
   assert.match(out.text(), /models:/);
 });
 
-test('runInit --sandbox writes OUTSIDE the workspace (XDG), not ./askup.yaml', () => {
+test('runInit --sandbox writes OUTSIDE the workspace (XDG), not ./consultum.yaml', () => {
   const prev = process.env.XDG_CONFIG_HOME;
-  process.env.XDG_CONFIG_HOME = '/tmp/askup-xdgtest';
+  process.env.XDG_CONFIG_HOME = '/tmp/consultum-xdgtest';
   try {
     let written = null;
     let mkdirp = null;
@@ -220,9 +220,9 @@ test('runInit --sandbox writes OUTSIDE the workspace (XDG), not ./askup.yaml', (
       cwd: '/work',
     });
     assert.equal(code, 0);
-    assert.match(written, /\/tmp\/askup-xdgtest\/askup\/config\.yaml$/);
+    assert.match(written, /\/tmp\/consultum-xdgtest\/consultum\/config\.yaml$/);
     assert.doesNotMatch(written, /\/work\//);
-    assert.match(mkdirp, /\/tmp\/askup-xdgtest\/askup$/);
+    assert.match(mkdirp, /\/tmp\/consultum-xdgtest\/consultum$/);
   } finally {
     if (prev === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = prev;
@@ -241,12 +241,12 @@ test('runInit writes when target does not exist', () => {
   let written = null;
   const code = runInit({ flags: {}, out: out.fn, err: sink().fn, detect: () => ({ ollama: true }), exists: () => false, writeFile: (p, c) => { written = { p, c }; }, cwd: '/tmp' });
   assert.equal(code, 0);
-  assert.match(written.p, /askup\.yaml$/);
+  assert.match(written.p, /consultum\.yaml$/);
   assert.match(written.c, /models:/);
 });
 
 // --- interactive init ---------------------------------------------------------------------------
-// The wizard is a terminal flow on purpose (no localhost web UI): askup's primary caller runs
+// The wizard is a terminal flow on purpose (no localhost web UI): consultum's primary caller runs
 // headless, in a sandbox, over SSH or in CI, where a browser wizard is unreachable.
 
 function scriptedAsk(answers) {
@@ -266,7 +266,7 @@ test('runInitInteractive writes a config that actually parses', async () => {
   const written = {};
   const { ask } = scriptedAsk(['n', 'n', '', 'gemma3:4b', '', '', 'n']);
   const code = await runInitInteractive({
-    flags: { config: '/tmp/askup-wizard-test.yaml' },
+    flags: { config: '/tmp/consultum-wizard-test.yaml' },
     out: sink().fn,
     err: sink().fn,
     ask,
@@ -289,7 +289,7 @@ test('runInitInteractive honours default_sensitive and an invalid trust falls ba
   const written = {};
   const { ask } = scriptedAsk(['', 'claude-opus-4-8', 'nonsense-trust', 'n', 'n', '', 'y']);
   await runInitInteractive({
-    flags: { config: '/tmp/askup-wizard-test2.yaml' },
+    flags: { config: '/tmp/consultum-wizard-test2.yaml' },
     out: sink().fn,
     err: sink().fn,
     ask,

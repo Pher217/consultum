@@ -7,7 +7,7 @@
 // packet can read local secrets and echo them back. Filesystem tools are opt-in AND directory-scoped
 // (config `tools: { allow: [...], dirs: [...] }`), never on by default.
 
-import { AskupError, KIND } from '../errors.js';
+import { ConsultumError, KIND } from '../errors.js';
 import { redactedTail } from '../redact.js';
 import { readCredentialFile } from '../credential.js';
 
@@ -22,7 +22,7 @@ export function create(model, deps) {
       if (model.tools && model.tools.allow.length > 0) {
         // Opt-in, directory-scoped read-only tools (config restricts the allowlist to Read/Grep/Glob).
         // CAVEAT: --add-dir ADDS directories; it does not remove the process's own
-        // working directory. Run askup from a directory that holds no secrets when enabling tools —
+        // working directory. Run consultum from a directory that holds no secrets when enabling tools —
         // this is a narrow opt-in, not a sandbox. Even Read here can disclose files; it is not a
         // security boundary.
         args.push('--tools', model.tools.allow.join(','));
@@ -42,14 +42,14 @@ export function create(model, deps) {
       // prompt from stdin when none is given as an argument.
       const input = system ? `${system}\n\n${prompt}` : prompt;
       const res = await deps.runWithStdin('claude', args, { timeoutMs, input, env });
-      if (res.timedOut) throw new AskupError(KIND.PROVIDER_ERROR, `claude (${model.id}) timed out after ${timeoutMs}ms`);
+      if (res.timedOut) throw new ConsultumError(KIND.PROVIDER_ERROR, `claude (${model.id}) timed out after ${timeoutMs}ms`);
       // Reject a non-zero exit before trusting stdout.
       if (res.code !== 0) {
-        throw new AskupError(KIND.PROVIDER_ERROR, `claude (${model.id}) exited ${res.code}: ${redactedTail(res.stderr)}`);
+        throw new ConsultumError(KIND.PROVIDER_ERROR, `claude (${model.id}) exited ${res.code}: ${redactedTail(res.stderr)}`);
       }
       const text = (res.stdout || '').trim();
       if (!text) {
-        throw new AskupError(
+        throw new ConsultumError(
           KIND.PROVIDER_ERROR,
           `claude (${model.id}) returned no output (exit ${res.code}): ${redactedTail(res.stderr)}`,
         );

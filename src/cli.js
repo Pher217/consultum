@@ -1,4 +1,4 @@
-// CLI logic, factored out of bin/askup.js so it is unit-testable with injected config/deps/streams.
+// CLI logic, factored out of bin/consultum.js so it is unit-testable with injected config/deps/streams.
 // Commands: consult | init | doctor | config. The question and context arrive via STDIN, never
 // argv (argv leaks to `ps`). Exit codes are the machine-readable failure semantics from errors.js.
 
@@ -7,19 +7,19 @@ import os from 'os';
 import path from 'path';
 import { consult } from './consult.js';
 import { loadConfig, discoverConfigPath, resolveAdvisorChain, resolveCurator, TRUST_VALUES } from './config.js';
-import { AskupError, KIND, EXIT } from './errors.js';
+import { ConsultumError, KIND, EXIT } from './errors.js';
 import { defaultRuntime } from './run.js';
 
-const USAGE = `askup — an advisory channel for delegated AI workers
+const USAGE = `consultum — an advisory channel for delegated AI workers
 
 Usage:
-  askup consult [--sensitive] [--panel] [--curate|--no-curate] [--json] [--task-id ID]
-                [--source-path PATH] [--config PATH]
-                (reads the question + context from STDIN — see below)
+  consultum consult [--sensitive] [--panel] [--curate|--no-curate] [--json]
+                    [--task-id ID] [--source-path PATH] [--config PATH]
+                    (reads the question + context from STDIN — see below)
 
-  askup init [--interactive] [--print] [--force] [--sandbox] [--config PATH]
-  askup doctor [--config PATH]
-  askup config [--config PATH]
+  consultum init [--interactive] [--print] [--force] [--sandbox] [--config PATH]
+  consultum doctor [--config PATH]
+  consultum config [--config PATH]
 
 --panel: ask every model in roles.panel the same question concurrently and show each view.
   Costs one extra model call PER PANELIST, plus the reconciler if configured. It also fires
@@ -37,7 +37,7 @@ Exit codes: 0 ok · 10 usage · 11 refused-by-policy · 12 provider-error · 13 
 
 export function parseArgs(argv) {
   const rest = [...argv];
-  // The command is the first token that is not a flag (so `askup --help` has no command).
+  // The command is the first token that is not a flag (so `consultum --help` has no command).
   const command = rest.length && !rest[0].startsWith('-') ? rest.shift() : undefined;
   const flags = { _: [] };
   for (let i = 0; i < rest.length; i++) {
@@ -98,7 +98,7 @@ const SECTION_ORDER = [
 export function formatHuman(rec) {
   const p = rec.provenance;
   const lines = [
-    '=== askup recommendation ===',
+    '=== consultum recommendation ===',
     `advisor: ${p.advisorModel} (${p.advisorProvider})   curated: ${p.curated ? `yes (${p.curatorModel})` : 'no'}   confidence: ${rec.confidence}/100   sensitive: ${p.sensitive ? 'yes' : 'no'}`,
     '',
   ];
@@ -139,7 +139,7 @@ export function formatHuman(rec) {
       } else if (pn.agreement === 'reconciler-excluded-sensitive') {
         lines.push('(!) a reconciler IS configured but was excluded: this request is sensitive and the', '    reconciler is untrusted. Views are NOT assessed for agreement.', '');
       } else {
-        lines.push('(i) No reconciler configured — the views above are NOT assessed for agreement.', '    askup will not guess whether they agree; read them and decide.', '');
+        lines.push('(i) No reconciler configured — the views above are NOT assessed for agreement.', '    consultum will not guess whether they agree; read them and decide.', '');
       }
       if (pn.correlation) lines.push(`(!) ${pn.correlation}`, '');
       if (pn.failures?.length) {
@@ -166,7 +166,7 @@ export async function runConsult({ stdin, flags, config, deps = defaultRuntime, 
   // is escalate-only, so a caller-provided path can only ADD sensitivity, never relax it.
   const sourcePath = flags.sourcePath ?? stdinSourcePath ?? null;
   if (!question) {
-    err(`askup consult: no question on stdin.\n\n${USAGE}`);
+    err(`consultum consult: no question on stdin.\n\n${USAGE}`);
     return EXIT.USAGE;
   }
   let cfg = config;
@@ -182,7 +182,7 @@ export async function runConsult({ stdin, flags, config, deps = defaultRuntime, 
   if (flags.taskId) {
     // os.tmpdir() honors TMPDIR/TEMP/TMP per platform; the old `TMPDIR || '/tmp'` wrote to a
     // literal `\tmp` on Windows, where TMPDIR is not set.
-    statePath = path.join(os.tmpdir(), `askup-state-${sanitize(flags.taskId)}.json`);
+    statePath = path.join(os.tmpdir(), `consultum-state-${sanitize(flags.taskId)}.json`);
     state = readState(statePath);
   }
 
@@ -234,7 +234,7 @@ export async function runDoctor({ flags, config, out, err, probe = defaultProbe 
   } catch (e) {
     return emitError(e, flags, err);
   }
-  out(`askup doctor — config: ${cfg.path ?? '(injected)'}`);
+  out(`consultum doctor — config: ${cfg.path ?? '(injected)'}`);
   out('');
   out('models:');
   const statusByName = {};
@@ -278,13 +278,13 @@ export async function runDoctor({ flags, config, out, err, probe = defaultProbe 
 
 // The interactive wizard writes the SAME YAML schema `init` already produces — it just fills the
 // values in instead of leaving a template to hand-edit. Deliberately a terminal flow, not a local
-// web UI: askup's primary caller is an automated worker running headless, in a sandbox, over SSH or
+// web UI: consultum's primary caller is an automated worker running headless, in a sandbox, over SSH or
 // in CI, where a browser wizard is unreachable — and standing up an HTTP listener that renders API
 // keys would add a real attack surface (DNS rebinding / CSRF against localhost) to a tool whose
 // whole job is handling secrets carefully. See docs/architecture.md.
 export async function runInitInteractive({ flags, out, err, detect = defaultDetect, ask, cwd = process.cwd(), writeFile = fs.writeFileSync, exists = fs.existsSync, mkdir = fs.mkdirSync }) {
   const detected = detect();
-  out('askup init — interactive. Enter to accept the [default]; Ctrl-C to abort.');
+  out('consultum init — interactive. Enter to accept the [default]; Ctrl-C to abort.');
   out(`detected on PATH: ${Object.entries(detected).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}`);
   out('');
 
@@ -317,8 +317,8 @@ export async function runInitInteractive({ flags, out, err, detect = defaultDete
   const sens = await ask('Treat every request as sensitive by default (third-party advisors refused)? [y/N] ');
 
   const content = [
-    '# askup config. Secrets are NEVER stored here — models reference env vars only.',
-    '# `askup doctor` verifies each model is reachable and (for Ollama) actually pulled.',
+    '# consultum config. Secrets are NEVER stored here — models reference env vars only.',
+    '# `consultum doctor` verifies each model is reachable and (for Ollama) actually pulled.',
     '# trust: local | trusted | untrusted (sensitive => trusted/local only).',
     'models:',
     ...models,
@@ -334,16 +334,16 @@ export async function runInitInteractive({ flags, out, err, detect = defaultDete
     err(`note: '${curator}' is not one of the models you configured — leaving the curator commented out.`);
   }
 
-  const target = flags.config ?? path.join(cwd, 'askup.yaml');
+  const target = flags.config ?? path.join(cwd, 'consultum.yaml');
   if (exists(target) && !flags.force) {
-    err(`askup init: ${target} already exists. Use --force to overwrite.`);
+    err(`consultum init: ${target} already exists. Use --force to overwrite.`);
     return EXIT.USAGE;
   }
   mkdir(path.dirname(target), { recursive: true });
   writeFile(target, content, 'utf8');
   out('');
   out(`wrote ${target}`);
-  out('next: `askup doctor` to verify, then pipe a question into `askup consult`.');
+  out('next: `consultum doctor` to verify, then pipe a question into `consultum consult`.');
   return EXIT.OK;
 }
 
@@ -355,27 +355,27 @@ export function runInit({ flags, out, err, detect = defaultDetect, cwd = process
     return EXIT.OK;
   }
   // The sandbox preset must NOT default into the worker-writable cwd (threat-model A7). Default it to
-  // the user config dir instead; a non-sandbox init still uses ./askup.yaml.
+  // the user config dir instead; a non-sandbox init still uses ./consultum.yaml.
   const defaultTarget = flags.sandbox
-    ? path.join(xdgConfigHome(), 'askup', 'config.yaml')
-    : path.join(cwd, 'askup.yaml');
+    ? path.join(xdgConfigHome(), 'consultum', 'config.yaml')
+    : path.join(cwd, 'consultum.yaml');
   const target = flags.config ?? defaultTarget;
   if (exists(target) && !flags.force) {
-    err(`askup init: ${target} already exists. Use --force to overwrite, or --print to preview.`);
+    err(`consultum init: ${target} already exists. Use --force to overwrite, or --print to preview.`);
     return EXIT.USAGE;
   }
-  mkdir(path.dirname(target), { recursive: true }); // create ~/.config/askup etc. so the write succeeds
+  mkdir(path.dirname(target), { recursive: true }); // create ~/.config/consultum etc. so the write succeeds
   writeFile(target, content, 'utf8');
   out(`wrote ${target}`);
   if (flags.sandbox) {
     out('sandbox preset: HTTP adapters only (no keychain, no bundled CLI). Set OPENAI_API_KEY /');
     out('ANTHROPIC_API_KEY (or api_key_file), and allowlist egress to api.openai.com / api.anthropic.com.');
-    out('IMPORTANT: keep this config OUTSIDE any worker-writable dir — set ASKUP_CONFIG to a path a');
+    out('IMPORTANT: keep this config OUTSIDE any worker-writable dir — set CONSULTUM_CONFIG to a path a');
     out('worker cannot write (threat-model A7). See docs/sandboxed-callers.md.');
   } else {
     out(`detected providers: ${Object.entries(detected).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}`);
   }
-  out('next: `askup doctor` to verify, then pipe a question into `askup consult`.');
+  out('next: `consultum doctor` to verify, then pipe a question into `consultum consult`.');
   return EXIT.OK;
 }
 
@@ -401,10 +401,10 @@ export function generateStarterConfig(detected, { sandbox = false } = {}) {
     advisor.push('local');
   }
   return [
-    '# askup config. Secrets are NEVER stored here — models reference env vars only.',
+    '# consultum config. Secrets are NEVER stored here — models reference env vars only.',
     '# Model ids below are EXAMPLES — change them to models you actually have.',
-    '# `askup doctor` tells you which are reachable and (for Ollama) actually pulled.',
-    '# Reference: https://github.com/Pher217/askup#docs',
+    '# `consultum doctor` tells you which are reachable and (for Ollama) actually pulled.',
+    '# Reference: https://github.com/Pher217/consultum#docs',
     '# trust: local | trusted | untrusted (sensitive => trusted/local only).',
     'models:',
     ...models,
@@ -421,9 +421,9 @@ export function generateStarterConfig(detected, { sandbox = false } = {}) {
 // one allowlisted host, never the OS keychain or a bundled CLI (docs/sandboxed-callers.md).
 function sandboxStarterConfig() {
   return [
-    '# askup — sandbox preset. HTTP adapters only (keychain-free, one host each).',
+    '# consultum — sandbox preset. HTTP adapters only (keychain-free, one host each).',
     '# Keys come from env vars (or api_key_file). Keep THIS FILE outside any worker-writable dir',
-    '# and point ASKUP_CONFIG at it (threat-model A7). trust: local | trusted | untrusted.',
+    '# and point CONSULTUM_CONFIG at it (threat-model A7). trust: local | trusted | untrusted.',
     'models:',
     '  claude: { provider: anthropic-api, id: claude-opus-4-8, trust: trusted,   api_key_env: ANTHROPIC_API_KEY }  # api.anthropic.com',
     '  gpt:    { provider: openai,        id: gpt-4o,          trust: untrusted, api_key_env: OPENAI_API_KEY }      # api.openai.com',
@@ -439,13 +439,13 @@ function sandboxStarterConfig() {
 // ---- helpers ---------------------------------------------------------------
 
 function emitError(e, flags, err) {
-  if (e instanceof AskupError) {
+  if (e instanceof ConsultumError) {
     if (flags.json) err(JSON.stringify(e.toJSON()));
-    else err(`askup: ${e.kind}: ${e.message}`);
+    else err(`consultum: ${e.kind}: ${e.message}`);
     return e.exitCode;
   }
   if (flags.json) err(JSON.stringify({ error: { kind: 'error', message: e.message } }));
-  else err(`askup: error: ${e.message}`);
+  else err(`consultum: error: ${e.message}`);
   return 1;
 }
 

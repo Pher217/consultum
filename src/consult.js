@@ -16,7 +16,7 @@ import { parseRecommendation } from './recommendation.js';
 import { adviseWithChain } from './ladder.js';
 import { consultSignature, checkConsultLimit, recordConsult } from './limits.js';
 import { defaultRuntime } from './run.js';
-import { AskupError, KIND } from './errors.js';
+import { ConsultumError, KIND } from './errors.js';
 
 const CURATOR_TIMEOUT_MS = 90_000;
 
@@ -39,7 +39,7 @@ export async function consult({
   // 1. redact both inputs before anything crosses a model boundary (defence in depth).
   const q = redactSecrets(String(question ?? '').trim());
   const ctx = redactSecrets(String(context ?? '').trim());
-  if (!q) throw new AskupError(KIND.USAGE, 'a question is required');
+  if (!q) throw new ConsultumError(KIND.USAGE, 'a question is required');
 
   // 2. sensitivity is config-driven; the flag may only escalate.
   const eff = isSensitive(cfg, { flagSensitive: sensitive, sourcePath });
@@ -54,10 +54,10 @@ export async function consult({
   // 4. resolve the advisor fallback chain, filtered by trust for a sensitive request.
   const chain = resolveAdvisorChain(cfg, { sensitive: eff });
   if (chain.length === 0) {
-    throw new AskupError(
+    throw new ConsultumError(
       KIND.REFUSED_BY_POLICY,
       eff
-        ? 'sensitive request: no trusted/local advisor is configured. Relay the packet manually to a trusted advisor — askup will not send it to a third party.'
+        ? 'sensitive request: no trusted/local advisor is configured. Relay the packet manually to a trusted advisor — consultum will not send it to a third party.'
         : 'no advisor resolved for this request.',
     );
   }
@@ -190,7 +190,7 @@ export async function consult({
       views,
       failures,
       // Three DISTINCT states, never conflated:
-      //   'unassessed'        - no reconciler configured; askup does NOT guess whether views agree
+      //   'unassessed'        - no reconciler configured; consultum does NOT guess whether views agree
       //                         (free-text agreement detection is not deterministic)
       //   'reconciled'        - a reconciler actually synthesized them
       //   'reconciler-failed' - one was configured but failed; the views still stand
@@ -264,7 +264,7 @@ export async function consult({
     lowConfidence: rec.lowConfidence,
     warnings: rec.warnings,
     // null when no panel was convened. When present, every panelist view is visible and `agreement`
-    // is 'unassessed' unless a reconciler actually synthesized them — askup does not guess consensus.
+    // is 'unassessed' unless a reconciler actually synthesized them — consultum does not guess consensus.
     panel: panelResult,
     provenance: {
       advisorModel: model.id,

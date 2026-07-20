@@ -1,11 +1,11 @@
 // Drop-in: give an OpenAI (or OpenAI-compatible) function-calling agent the ability to "ask up".
 //
-// Same idea as the Ollama example: register askup's TOOL_SCHEMA as one of the assistant's tools;
-// when the model calls `consult_advisor`, run askupTool() and return the JSON result as the tool
+// Same idea as the Ollama example: register consultum's TOOL_SCHEMA as one of the assistant's tools;
+// when the model calls `consult_advisor`, run consultumTool() and return the JSON result as the tool
 // message. This is a sketch to adapt — not executed by the test suite.
 
 import OpenAI from 'openai'; // your existing client
-import { askupTool, TOOL_SCHEMA } from 'askup'; // or: '../../src/index.js' from within this repo
+import { consultumTool, TOOL_SCHEMA } from 'consultum'; // or: '../../src/index.js' from within this repo
 
 const client = new OpenAI();
 const MODEL = process.env.AGENT_MODEL || 'gpt-4o';
@@ -27,7 +27,7 @@ export async function runAgent(task) {
       const args = JSON.parse(tc.function.arguments);
       const result =
         tc.function.name === 'consult_advisor'
-          ? await askupTool(args)
+          ? await consultumTool(args)
           : { ok: false, error: { kind: 'usage', message: `unhandled tool ${tc.function.name}` } };
       messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
     }

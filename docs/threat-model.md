@@ -1,18 +1,18 @@
 # Threat model
 
-`askup` moves untrusted content across model boundaries and returns advice to a weak executor.
+`consultum` moves untrusted content across model boundaries and returns advice to a weak executor.
 This document states the adversaries, trust boundaries, and residual risks. It is a living
 document — expand it as adapters and features land.
 
 ## Assets
 - Local secrets on the executor/advisor host (`~/.ssh`, `.env`, `~/.aws/credentials`, tokens).
 - The code/context the executor shares.
-- The provider credentials `askup` uses.
+- The provider credentials `consultum` uses.
 
 ## Trust boundaries
-- **Executor → askup**: the executor's rough context is attacker-influenceable (error logs,
+- **Executor → consultum**: the executor's rough context is attacker-influenceable (error logs,
   dependency source, scraped docs, tool output). Treat all of it as untrusted data.
-- **askup → provider**: anything sent crosses to a third party unless the request is marked
+- **consultum → provider**: anything sent crosses to a third party unless the request is marked
   sensitive and routed to a `trusted`/`local` advisor.
 - **advisor → executor**: the returned recommendation is untrusted input flowing to the
   *weakest* model in the system.
@@ -38,7 +38,7 @@ echoes them in its recommendation.
   no-tools advisor — it can autonomously read files in its working directory. Do not place it first
   in an untrusted advisor chain, and never use it for sensitive data. Prefer the `openai` adapter
   (genuine request-shaped, no tools) for an OpenAI advisor. Even the opt-in `anthropic-cli` tools use
-  `--add-dir`, which *adds* directories without removing the process's own cwd — run askup from a
+  `--add-dir`, which *adds* directories without removing the process's own cwd — run consultum from a
   directory with no secrets when enabling tools.
 
 ### A3 — RCE via the returned recommendation
@@ -66,17 +66,17 @@ credential.
   files are referenced by path/env only, never inlined in config, and are gitignored.
 
 ### A7 — The config file is trusted input
-`askup` reads its config from the first of `$ASKUP_CONFIG`, `./askup.{yaml,yml,json}`,
-`$XDG_CONFIG_HOME/askup/config.yaml`, `~/.askup.*` — so a config in the **current directory wins over
+`consultum` reads its config from the first of `$CONSULTUM_CONFIG`, `./consultum.{yaml,yml,json}`,
+`$XDG_CONFIG_HOME/consultum/config.yaml`, `~/.consultum.*` — so a config in the **current directory wins over
 the user's home config**. A model entry can point at an arbitrary `base_url` and reference a credential
-by env-var name (and, where enabled, by file path). A caller that can **write the config askup will
-discover** — e.g. an attacker who can drop `./askup.yaml` into a worker-writable working directory — can
-therefore make askup send a referenced credential (an env-var key today; a file-based key where
+by env-var name (and, where enabled, by file path). A caller that can **write the config consultum will
+discover** — e.g. an attacker who can drop `./consultum.yaml` into a worker-writable working directory — can
+therefore make consultum send a referenced credential (an env-var key today; a file-based key where
 `token_file`/`api_key_file` is enabled) as an `Authorization: Bearer` header to a host of their choosing.
 `trust:` is self-assigned in that config, so `--sensitive` does not block it.
-- **Mitigation:** the config file is **trusted input**, on par with the code askup runs. Do **not** run
-  askup with a config discoverable from a directory an untrusted worker can write to — pin `--config` /
-  `$ASKUP_CONFIG` to a path **outside the workspace** (see `docs/sandboxed-callers.md`). File-based
+- **Mitigation:** the config file is **trusted input**, on par with the code consultum runs. Do **not** run
+  consultum with a config discoverable from a directory an untrusted worker can write to — pin `--config` /
+  `$CONSULTUM_CONFIG` to a path **outside the workspace** (see `docs/sandboxed-callers.md`). File-based
   credentials additionally pass a shape gate (single line, size-capped, POSIX perm-checked) so a config
   cannot turn an arbitrary file (an SSH key, `.env`) into an exfiltrated Bearer header.
 - **Residual:** an attacker who controls both the config *and* a reachable `base_url` can still
@@ -92,7 +92,7 @@ therefore make askup send a referenced credential (an env-var key today; a file-
 | A3 RCE via recommendation | Advisor output schema-validated (parse contract) + linted for shell/network commands | `src/recommendation.js`; asserted in `test/recommendation.test.js` |
 | A4 redaction bypass | Redact twice (raw input + curated output); sensitive routing keeps third parties out entirely | `src/redact.js` (10-case regression), `src/consult.js` |
 | A5 fail-open sensitivity | Sensitivity is config-level (`default_sensitive` + per-path); `--sensitive` only escalates | `src/config.js` (`isSensitive`); refusal in `consult.js`; asserted in `test/consult.test.js` |
-| A6 argv/cred leak | Question + context via stdin (CLI + `runWithStdin`); every CLI adapter feeds its prompt on stdin, incl. `codex exec -`; tokens by path/env, gitignored; adapter stderr redacted before it enters an error message | `bin/askup.js`, `src/run.js`, `src/providers/*`, `src/redact.js` (`redactedTail`) |
+| A6 argv/cred leak | Question + context via stdin (CLI + `runWithStdin`); every CLI adapter feeds its prompt on stdin, incl. `codex exec -`; tokens by path/env, gitignored; adapter stderr redacted before it enters an error message | `bin/consultum.js`, `src/run.js`, `src/providers/*`, `src/redact.js` (`redactedTail`) |
 | A7 config-as-trust-boundary | File-based credentials pass a shape gate (single line, ≤4 KB) + POSIX perm hard-fail; docs pin the config outside any worker-writable dir | `src/credential.js`; `docs/threat-model.md`, `docs/sandboxed-callers.md` |
 
 Fail-closed refusal (a sensitive request with no trusted/local advisor) returns exit code `11`
@@ -100,5 +100,5 @@ Fail-closed refusal (a sensitive request with no trusted/local advisor) returns 
 
 ## Non-goals (security)
 Not a sandbox, not a DLP system, not a guarantee against a determined adversary who controls the
-executor's input. `askup` reduces accidental leakage and the most obvious injection paths, and is
+executor's input. `consultum` reduces accidental leakage and the most obvious injection paths, and is
 explicit about what it does not stop.

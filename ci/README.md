@@ -1,6 +1,6 @@
 # CI workflow — one command to enable
 
-`ci/ci.yml` is the GitHub Actions workflow for askup: ubuntu/windows/macOS x Node 20/22, running
+`ci/ci.yml` is the GitHub Actions workflow for consultum: ubuntu/windows/macOS x Node 20/22, running
 `npm ci`, `npm run lint`, `npm test`, with `permissions: contents: read`.
 
 It is parked here rather than at `.github/workflows/ci.yml` because GitHub refuses to let a token

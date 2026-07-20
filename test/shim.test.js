@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { askupTool, TOOL_SCHEMA } from '../src/shim.js';
+import { consultumTool, TOOL_SCHEMA } from '../src/shim.js';
 import { parseConfig } from '../src/config.js';
 
 test('shim/tool-schema.json stays in sync with the exported TOOL_SCHEMA', () => {
@@ -20,23 +20,23 @@ test('TOOL_SCHEMA is a valid function schema requiring question + packet', () =>
   assert.deepEqual(TOOL_SCHEMA.function.parameters.required, ['question', 'packet']);
 });
 
-test('askupTool returns { ok: true, ...rec } on success (packet maps to context)', async () => {
-  const res = await askupTool({ question: 'q', packet: 'objective ...' }, { config: CFG, deps: okDeps });
+test('consultumTool returns { ok: true, ...rec } on success (packet maps to context)', async () => {
+  const res = await consultumTool({ question: 'q', packet: 'objective ...' }, { config: CFG, deps: okDeps });
   assert.equal(res.ok, true);
   assert.equal(res.recommendation, 'Do the safe thing.');
   assert.equal(res.provenance.advisorModel, 'adv-model');
 });
 
-test('askupTool never throws — a policy refusal comes back as { ok: false, error }', async () => {
+test('consultumTool never throws — a policy refusal comes back as { ok: false, error }', async () => {
   const cfg = parseConfig('models:\n  gpt: { provider: codex-cli, id: s, trust: untrusted }\nroles:\n  advisor: [gpt]\n');
-  const res = await askupTool({ question: 'q', packet: 'p', sensitive: true }, { config: cfg, deps: okDeps });
+  const res = await consultumTool({ question: 'q', packet: 'p', sensitive: true }, { config: cfg, deps: okDeps });
   assert.equal(res.ok, false);
   assert.equal(res.error.kind, 'refused-by-policy');
 });
 
-test('askupTool surfaces a provider error as { ok: false, error }', async () => {
+test('consultumTool surfaces a provider error as { ok: false, error }', async () => {
   const badDeps = { httpPostJson: async () => { throw new Error('down'); } };
-  const res = await askupTool({ question: 'q', packet: 'p' }, { config: CFG, deps: badDeps });
+  const res = await consultumTool({ question: 'q', packet: 'p' }, { config: CFG, deps: badDeps });
   assert.equal(res.ok, false);
   assert.equal(res.error.kind, 'provider-error');
 });

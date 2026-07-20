@@ -1,8 +1,8 @@
-# askup
+# consultum
 
 > An advisory channel for delegated AI workers. When a cheap worker gets stuck, it can **ask up** — escalate a curated problem to a stronger model — instead of guessing.
 
-**Status: v0.1 implemented.** `npm install -g askup` (or `npx askup`), then `askup init` → `askup doctor` → `askup consult`. Security-first (see below). See [`docs/architecture.md`](docs/architecture.md) and [`docs/threat-model.md`](docs/threat-model.md).
+**Status: v0.1 implemented.** `npm install -g consultum` (or `npx consultum`), then `consultum init` → `consultum doctor` → `consultum consult`. Security-first (see below). See [`docs/architecture.md`](docs/architecture.md) and [`docs/threat-model.md`](docs/threat-model.md).
 
 ---
 
@@ -14,7 +14,7 @@ A good multi-model workflow looks like this:
 
 But there's a gap: **the workers can't talk to each other.** An agentic session can spawn an advisory subagent when it's stuck. A worker running in a tool loop, or a model inside a sandbox, cannot — it's isolated. When such a worker hits something above its weight class, it either **guesses** (bad) or **dead-ends** (wasteful).
 
-`askup` is the missing channel: a worker packages its problem, a **curator** model compresses the mess into clean evidence, and the whole thing **escalates to a higher-tier advisor**. The advisor answers; the worker continues. Ownership never leaves the orchestrator.
+`consultum` is the missing channel: a worker packages its problem, a **curator** model compresses the mess into clean evidence, and the whole thing **escalates to a higher-tier advisor**. The advisor answers; the worker continues. Ownership never leaves the orchestrator.
 
 ## How it works
 
@@ -30,10 +30,10 @@ Any engine can open it:
 ## Quickstart
 
 ```bash
-npm install -g askup
-askup init            # detects claude/codex/ollama, writes ./askup.yaml
-askup doctor          # verifies each configured model is reachable AND available
-echo "Why is my nightly job dropping rows?" | askup consult
+npm install -g consultum
+consultum init            # detects claude/codex/ollama, writes ./consultum.yaml
+consultum doctor          # verifies each configured model is reachable AND available
+echo "Why is my nightly job dropping rows?" | consultum consult
 ```
 
 ### The stdin protocol
@@ -45,7 +45,7 @@ the box via `ps`. Two accepted shapes:
 - Plain text: first line is the question, the rest is context.
 
 ```bash
-askup consult --context - <<'EOF'
+consultum consult --context - <<'EOF'
 Why is my nightly job dropping rows?
 It's a Postgres COPY into a partitioned table, no errors logged, ~2% of rows missing.
 EOF
@@ -54,7 +54,7 @@ EOF
 ### Example output (abridged)
 
 ```
-=== askup recommendation ===
+=== consultum recommendation ===
 advisor: gemma3:4b (ollama)   curated: no   confidence: 75/100   sensitive: no
 
 ## Problem Assessment
@@ -82,7 +82,7 @@ advisor: gemma3:4b (ollama)   curated: no   confidence: 75/100   sensitive: no
 When one advisor isn't enough, configure `roles.panel` and pass `--panel`: every panelist is asked
 the same question **concurrently** and you get each view back.
 
-askup deliberately does **not** compute an "they agree" verdict over free text — deciding whether
+consultum deliberately does **not** compute an "they agree" verdict over free text — deciding whether
 two prose recommendations agree isn't deterministic, and a cheap keyword check would be a confident
 lie exactly where you'd most trust it. So either you configure a `reconciler` model, which
 synthesizes the views and is instructed to **name the dissent** and lower its confidence when they
@@ -111,10 +111,10 @@ CLI-adapter caveats on Windows.
 ## Design principles
 
 - **Provider-agnostic.** Roles (curator, advisor, panel) map to models in one config file. No model names are hardcoded. Anthropic, OpenAI/Codex, Ollama, and any OpenAI-compatible endpoint are adapters.
-- **The advisor advises; it never decides.** `askup` returns a structured recommendation with a confidence score and any dissent. The caller stays the decision-owner.
+- **The advisor advises; it never decides.** `consultum` returns a structured recommendation with a confidence score and any dissent. The caller stays the decision-owner.
 - **Two hops on purpose.** A high-context, cheap *curator* turns a weak worker's messy dump into a tight, fact-vs-assumption packet, so the expensive advisor spends its tokens reasoning, not parsing. (Optional; off by default.)
 - **Fail-closed on sensitive data.** Mark a request sensitive and only `trusted`/`local` advisors are eligible — third-party providers are skipped, never silently used. Secrets are redacted before any cross-model send.
-- **Clean & simple.** One command to install, one small config file to configure, `askup doctor` to tell you what's reachable.
+- **Clean & simple.** One command to install, one small config file to configure, `consultum doctor` to tell you what's reachable.
 
 ## Security posture (read this)
 
@@ -122,15 +122,15 @@ This tool ships *your code's context* to model providers, so security is first-c
 
 1. **The advisor runs with no tools by default** — the curated packet is its entire world. "Read-only" is *not* a safety guarantee: a filesystem-equipped advisor reachable through an injectable packet could read local secrets and echo them back. Filesystem access is opt-in, directory-scoped, and restricted to read-only tools. **One exception to know:** the `codex-cli` adapter (`codex exec -s read-only`) is a *read-capable agent*, not a no-tools advisor — prefer the `openai` adapter for a request-shaped OpenAI advisor, and never point `codex-cli` at sensitive data. See [`docs/threat-model.md`](docs/threat-model.md).
 2. **The returned recommendation is untrusted input.** It is aimed at the *weakest* model in the system. Never pipe an advisor's implementation guidance to a shell unexamined; output is schema-validated and linted for embedded shell/network commands.
-3. **Redaction is best-effort** against *accidental* leakage, not adversarial encoding. No telemetry — `askup` phones home to nobody but the model providers you configure.
+3. **Redaction is best-effort** against *accidental* leakage, not adversarial encoding. No telemetry — `consultum` phones home to nobody but the model providers you configure.
 
 ## Use it from any language
 
-askup's core is Node, but you drive it over a clean process contract — question + context on stdin, a JSON recommendation on stdout, machine-readable exit codes — so any language works. See [`docs/calling-from-python.md`](docs/calling-from-python.md) for a ~15-line Python wrapper. (A native MCP server, so MCP-native agent frameworks can call `consult` as a tool, is on the roadmap.)
+consultum's core is Node, but you drive it over a clean process contract — question + context on stdin, a JSON recommendation on stdout, machine-readable exit codes — so any language works. See [`docs/calling-from-python.md`](docs/calling-from-python.md) for a ~15-line Python wrapper. (A native MCP server, so MCP-native agent frameworks can call `consult` as a tool, is on the roadmap.)
 
 ## Non-goals
 
-Not an agent runtime, task router, workflow engine, or model gateway. `askup` does exactly one thing: **controlled escalation from a weaker executor to a stronger advisor, with context curation and safety.**
+Not an agent runtime, task router, workflow engine, or model gateway. `consultum` does exactly one thing: **controlled escalation from a weaker executor to a stronger advisor, with context curation and safety.**
 
 ## Docs
 
@@ -140,9 +140,9 @@ Not an agent runtime, task router, workflow engine, or model gateway. `askup` do
 | [`docs/threat-model.md`](docs/threat-model.md) | Trust boundaries, attack scenarios, mitigations |
 | [`docs/when-to-consult.md`](docs/when-to-consult.md) | When escalating to an advisor is (and isn't) worth it |
 | [`docs/adding-a-provider.md`](docs/adding-a-provider.md) | How to write a new provider adapter |
-| [`docs/sandboxed-callers.md`](docs/sandboxed-callers.md) | Calling askup from inside a sandboxed worker |
+| [`docs/sandboxed-callers.md`](docs/sandboxed-callers.md) | Calling consultum from inside a sandboxed worker |
 | [`docs/windows.md`](docs/windows.md) | Windows support matrix and caveats |
-| [`docs/calling-from-python.md`](docs/calling-from-python.md) | Driving askup from Python (or any language) |
+| [`docs/calling-from-python.md`](docs/calling-from-python.md) | Driving consultum from Python (or any language) |
 
 ## License
 

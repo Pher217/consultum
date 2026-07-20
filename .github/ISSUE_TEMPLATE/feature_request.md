@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for askup
+about: Suggest an idea for consultum
 title: ''
 labels: enhancement
 assignees: ''

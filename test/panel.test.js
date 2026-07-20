@@ -4,7 +4,7 @@ import { consult } from '../src/consult.js';
 import { parseConfig, resolvePanel, resolveReconciler, MAX_PANELISTS } from '../src/config.js';
 import { convenePanel, correlationWarning, buildReconcilerPrompt } from '../src/panel.js';
 import { parseRecommendation } from '../src/recommendation.js';
-import { askupTool } from '../src/shim.js';
+import { consultumTool } from '../src/shim.js';
 
 const REC = (approach, conf) =>
   `## Recommended Approach\n${approach}\n## Risks\nsome risk\n## Confidence\n${conf}`;
@@ -13,7 +13,7 @@ const CFG = `
 models:
   adv:   { provider: ollama, id: adv-model,  trust: trusted }
   p1:    { provider: ollama, id: panel-one,  trust: trusted }
-  p2:    { provider: openai, id: panel-two,  trust: trusted, api_key_env: ASKUP_TEST_PANEL_KEY }
+  p2:    { provider: openai, id: panel-two,  trust: trusted, api_key_env: CONSULTUM_TEST_PANEL_KEY }
   recon: { provider: ollama, id: recon-model, trust: trusted }
 roles:
   advisor: [adv]
@@ -62,7 +62,7 @@ test('config rejects unknown panel / reconciler models', () => {
 });
 
 test('--panel convenes the panel and every view is visible', async () => {
-  process.env.ASKUP_TEST_PANEL_KEY = 'k';
+  process.env.CONSULTUM_TEST_PANEL_KEY = 'k';
   try {
     const d = deps({
       'adv-model': REC('primary approach', 90),
@@ -78,12 +78,12 @@ test('--panel convenes the panel and every view is visible', async () => {
     // primary recommendation is untouched by the panel
     assert.match(rec.recommendation, /primary approach/);
   } finally {
-    delete process.env.ASKUP_TEST_PANEL_KEY;
+    delete process.env.CONSULTUM_TEST_PANEL_KEY;
   }
 });
 
 test('low confidence auto-triggers the panel; high confidence does not', async () => {
-  process.env.ASKUP_TEST_PANEL_KEY = 'k';
+  process.env.CONSULTUM_TEST_PANEL_KEY = 'k';
   try {
     const low = await consult({
       question: 'q', config: parseConfig(CFG),
@@ -97,11 +97,11 @@ test('low confidence auto-triggers the panel; high confidence does not', async (
     });
     assert.equal(high.panel, null, 'a confident answer should not spend tokens on a panel');
   } finally {
-    delete process.env.ASKUP_TEST_PANEL_KEY;
+    delete process.env.CONSULTUM_TEST_PANEL_KEY;
   }
 });
 
-test('WITHOUT a reconciler askup does NOT claim agreement — it reports "unassessed"', async () => {
+test('WITHOUT a reconciler consultum does NOT claim agreement — it reports "unassessed"', async () => {
   // Regression: free-text agreement detection is not deterministic, so never fake it.
   const noRecon = parseConfig(`
 models:
@@ -122,7 +122,7 @@ roles:
 });
 
 test('a reconciler synthesizes and is labelled as such', async () => {
-  process.env.ASKUP_TEST_PANEL_KEY = 'k';
+  process.env.CONSULTUM_TEST_PANEL_KEY = 'k';
   try {
     const rec = await consult({
       question: 'q', panel: true, config: parseConfig(CFG),
@@ -132,12 +132,12 @@ test('a reconciler synthesizes and is labelled as such', async () => {
     assert.match(rec.panel.reconciliation.recommendation, /the reconciled view/);
     assert.equal(rec.panel.reconciledBy, 'recon-model');
   } finally {
-    delete process.env.ASKUP_TEST_PANEL_KEY;
+    delete process.env.CONSULTUM_TEST_PANEL_KEY;
   }
 });
 
 test('a failing panelist is recorded but does not sink the panel', async () => {
-  process.env.ASKUP_TEST_PANEL_KEY = 'k';
+  process.env.CONSULTUM_TEST_PANEL_KEY = 'k';
   try {
     const rec = await consult({
       question: 'q', panel: true, config: parseConfig(CFG),
@@ -147,7 +147,7 @@ test('a failing panelist is recorded but does not sink the panel', async () => {
     assert.equal(rec.panel.failures.length, 1);
     assert.match(rec.panel.failures[0], /p2/);
   } finally {
-    delete process.env.ASKUP_TEST_PANEL_KEY;
+    delete process.env.CONSULTUM_TEST_PANEL_KEY;
   }
 });
 
@@ -157,12 +157,12 @@ test('a panelist sharing an id with the advisor but on ANOTHER provider is kept 
   const cfg = parseConfig(`
 models:
   adv: { provider: ollama, id: same-id, trust: trusted }
-  p:   { provider: openai-compatible, id: same-id, trust: trusted, base_url: http://x, api_key_env: ASKUP_TEST_PANEL_KEY }
+  p:   { provider: openai-compatible, id: same-id, trust: trusted, base_url: http://x, api_key_env: CONSULTUM_TEST_PANEL_KEY }
 roles:
   advisor: [adv]
   panel: [p]
 `);
-  process.env.ASKUP_TEST_PANEL_KEY = 'k';
+  process.env.CONSULTUM_TEST_PANEL_KEY = 'k';
   try {
     const rec = await consult({
       question: 'q', panel: true, config: cfg,
@@ -171,7 +171,7 @@ roles:
     assert.equal(rec.panel.views.length, 1, 'different-provider panelist must not be filtered out');
     assert.equal(rec.panel.views[0].provider, 'openai-compatible');
   } finally {
-    delete process.env.ASKUP_TEST_PANEL_KEY;
+    delete process.env.CONSULTUM_TEST_PANEL_KEY;
   }
 });
 
@@ -220,7 +220,7 @@ roles:
 test('the reconciler DISSENT + confidence survive into the result', async () => {
   // The reconciler is told to put material disagreement in Alternatives and lower its confidence.
   // Keeping only `recommendation` would amputate the dissent and render disagreement as consensus.
-  process.env.ASKUP_TEST_PANEL_KEY = 'k';
+  process.env.CONSULTUM_TEST_PANEL_KEY = 'k';
   try {
     const synth =
       '## Recommended Approach\ndo the safe thing\n' +
@@ -235,7 +235,7 @@ test('the reconciler DISSENT + confidence survive into the result', async () => 
     assert.match(rec.panel.reconciliation.risks, /reconciled risk/);
     assert.ok(Array.isArray(rec.panel.reconciliation.warnings));
   } finally {
-    delete process.env.ASKUP_TEST_PANEL_KEY;
+    delete process.env.CONSULTUM_TEST_PANEL_KEY;
   }
 });
 
@@ -259,7 +259,7 @@ roles:
 });
 
 test('policy.panel_auto:false requires an explicit --panel — auto fan-out is separate consent', async () => {
-  process.env.ASKUP_TEST_PANEL_KEY = 'k';
+  process.env.CONSULTUM_TEST_PANEL_KEY = 'k';
   try {
     const cfg = parseConfig(`${CFG}policy:\n  panel_auto: false\n`);
     const d = { 'adv-model': REC('unsure', 20), 'panel-one': REC('one', 80), 'panel-two': REC('two', 70), 'recon-model': REC('r', 75) };
@@ -268,14 +268,14 @@ test('policy.panel_auto:false requires an explicit --panel — auto fan-out is s
     const forced = await consult({ question: 'q', panel: true, config: cfg, deps: deps(d) });
     assert.equal(forced.panel.convened, true, '--panel still works');
   } finally {
-    delete process.env.ASKUP_TEST_PANEL_KEY;
+    delete process.env.CONSULTUM_TEST_PANEL_KEY;
   }
 });
 
 test('the reconciliation weighs the PRIMARY advisor too, and says so (reconciledOver)', async () => {
   // "reconciled" must not mean "reconciled the panelists while ignoring the answer that triggered
   // the panel" — the primary is included, labelled, and the set is auditable.
-  process.env.ASKUP_TEST_PANEL_KEY = 'k';
+  process.env.CONSULTUM_TEST_PANEL_KEY = 'k';
   const seenPrompts = [];
   try {
     const base = deps({
@@ -301,7 +301,7 @@ test('the reconciliation weighs the PRIMARY advisor too, and says so (reconciled
     assert.match(reconCall.text, /the primary opinion/, 'primary answer must reach the reconciler');
     assert.match(reconCall.text, /PRIMARY/, 'primary must be labelled as such');
   } finally {
-    delete process.env.ASKUP_TEST_PANEL_KEY;
+    delete process.env.CONSULTUM_TEST_PANEL_KEY;
   }
 });
 
@@ -377,7 +377,7 @@ roles:
   assert.equal(resolvePanel(cfg, { sensitive: false }).length, MAX_PANELISTS);
 });
 
-test('askupTool forwards a host-requested panel (and never lets args request one)', async () => {
+test('consultumTool forwards a host-requested panel (and never lets args request one)', async () => {
   const cfg = parseConfig(`
 models:
   a:  { provider: ollama, id: a,  trust: local }
@@ -393,13 +393,13 @@ roles:
       return { message: { content: REC('Do the safe thing.', 88) } };
     },
   };
-  const viaOpts = await askupTool({ question: 'q', context: 'c' }, { config: cfg, deps, panel: true });
+  const viaOpts = await consultumTool({ question: 'q', context: 'c' }, { config: cfg, deps, panel: true });
   assert.equal(viaOpts.ok, true);
   assert.ok(seen.includes('p1'), 'opts.panel must actually reach consult()');
 
   seen.length = 0;
   // the worker asking for a panel in ARGS must not trigger one — that is the host's spend
-  const viaArgs = await askupTool({ question: 'q', context: 'c', panel: true }, { config: cfg, deps });
+  const viaArgs = await consultumTool({ question: 'q', context: 'c', panel: true }, { config: cfg, deps });
   assert.equal(viaArgs.ok, true);
   assert.ok(!seen.includes('p1'), 'a worker must not be able to convene a paid panel via args');
 });

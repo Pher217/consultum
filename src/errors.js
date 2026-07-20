@@ -1,4 +1,4 @@
-// Machine-readable failure semantics. Every askup failure carries a `kind` (stable string) and a
+// Machine-readable failure semantics. Every consultum failure carries a `kind` (stable string) and a
 // process exit code, so a calling script — or a tool loop — can branch on the outcome without
 // parsing prose. Codes start at 10 to stay clear of Node's own 1 (uncaught) / and the shell's
 // reserved range.
@@ -35,10 +35,10 @@ export function exitCodeForKind(kind) {
   return KIND_TO_EXIT[kind] ?? 1;
 }
 
-export class AskupError extends Error {
+export class ConsultumError extends Error {
   constructor(kind, message, { cause } = {}) {
     super(message);
-    this.name = 'AskupError';
+    this.name = 'ConsultumError';
     this.kind = kind;
     this.exitCode = exitCodeForKind(kind);
     if (cause !== undefined) this.cause = cause;

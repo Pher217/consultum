@@ -7,7 +7,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { AskupError, KIND } from './errors.js';
+import { ConsultumError, KIND } from './errors.js';
 
 const MAX_CREDENTIAL_BYTES = 4096;
 
@@ -21,29 +21,29 @@ export function readCredentialFile(filePath, configDir, label = 'credential') {
   try {
     stat = fs.statSync(abs);
   } catch {
-    throw new AskupError(KIND.USAGE, `${label}: cannot read credential file ${abs}`);
+    throw new ConsultumError(KIND.USAGE, `${label}: cannot read credential file ${abs}`);
   }
-  if (!stat.isFile()) throw new AskupError(KIND.USAGE, `${label}: ${abs} is not a file`);
+  if (!stat.isFile()) throw new ConsultumError(KIND.USAGE, `${label}: ${abs} is not a file`);
   if (stat.size > MAX_CREDENTIAL_BYTES) {
-    throw new AskupError(
+    throw new ConsultumError(
       KIND.USAGE,
       `${label}: ${abs} is ${stat.size} bytes (> ${MAX_CREDENTIAL_BYTES}) — too large to be a credential; refusing to send it`,
     );
   }
   // POSIX perm check: a credential file must not be group/world-accessible. Skipped on Windows,
   // where fs mode bits are not meaningful. Escape hatch for container-mounted secrets.
-  if (process.platform !== 'win32' && !process.env.ASKUP_ALLOW_INSECURE_CREDENTIAL_PERMS) {
+  if (process.platform !== 'win32' && !process.env.CONSULTUM_ALLOW_INSECURE_CREDENTIAL_PERMS) {
     if ((stat.mode & 0o077) !== 0) {
-      throw new AskupError(
+      throw new ConsultumError(
         KIND.USAGE,
-        `${label}: ${abs} is group/world-accessible — run \`chmod 600 ${abs}\` (or set ASKUP_ALLOW_INSECURE_CREDENTIAL_PERMS=1 to override)`,
+        `${label}: ${abs} is group/world-accessible — run \`chmod 600 ${abs}\` (or set CONSULTUM_ALLOW_INSECURE_CREDENTIAL_PERMS=1 to override)`,
       );
     }
   }
   const val = fs.readFileSync(abs, 'utf8').trim();
-  if (!val) throw new AskupError(KIND.USAGE, `${label}: ${abs} is empty`);
+  if (!val) throw new ConsultumError(KIND.USAGE, `${label}: ${abs} is empty`);
   if (/[\r\n]/.test(val)) {
-    throw new AskupError(KIND.USAGE, `${label}: ${abs} has multiple lines — a credential must be a single line; refusing to send it`);
+    throw new ConsultumError(KIND.USAGE, `${label}: ${abs} has multiple lines — a credential must be a single line; refusing to send it`);
   }
   return val;
 }

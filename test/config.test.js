@@ -27,7 +27,7 @@ policy:
 `;
 
 function tmpdir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'askup-cfg-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'consultum-cfg-'));
 }
 
 test('parseConfig normalizes models, roles, and applies policy defaults', () => {
@@ -114,18 +114,18 @@ test('sensitive_paths glob matches at the root and across segments, and normaliz
   assert.equal(isSensitive(c, { sourcePath: 'app/main.js' }), false);
 });
 
-test('discoverConfigPath honors ASKUP_CONFIG over cwd', () => {
+test('discoverConfigPath honors CONSULTUM_CONFIG over cwd', () => {
   const dir = tmpdir();
   const explicit = path.join(dir, 'custom.yaml');
   fs.writeFileSync(explicit, VALID);
-  fs.writeFileSync(path.join(dir, 'askup.yaml'), VALID);
-  const found = discoverConfigPath({ cwd: dir, env: { ASKUP_CONFIG: explicit }, home: dir });
+  fs.writeFileSync(path.join(dir, 'consultum.yaml'), VALID);
+  const found = discoverConfigPath({ cwd: dir, env: { CONSULTUM_CONFIG: explicit }, home: dir });
   assert.equal(found, explicit);
 });
 
-test('discoverConfigPath finds ./askup.yaml when no env override', () => {
+test('discoverConfigPath finds ./consultum.yaml when no env override', () => {
   const dir = tmpdir();
-  const p = path.join(dir, 'askup.yaml');
+  const p = path.join(dir, 'consultum.yaml');
   fs.writeFileSync(p, VALID);
   const found = discoverConfigPath({ cwd: dir, env: {}, home: path.join(dir, 'nohome') });
   assert.equal(found, p);
@@ -135,13 +135,13 @@ test('loadConfig throws USAGE when no config exists', () => {
   const dir = tmpdir();
   assert.throws(
     () => loadConfig({ cwd: dir, env: {}, home: path.join(dir, 'nohome') }),
-    (e) => e.kind === 'usage' && /no askup config/.test(e.message),
+    (e) => e.kind === 'usage' && /no consultum config/.test(e.message),
   );
 });
 
 test('applyEnvOverrides overrides id and base_url by model name', () => {
   const c = parseConfig(VALID);
-  applyEnvOverrides(c, { ASKUP_MODEL_STRONG_ID: 'claude-strong-9', ASKUP_MODEL_LOCAL_BASE_URL: 'http://x:1' });
+  applyEnvOverrides(c, { CONSULTUM_MODEL_STRONG_ID: 'claude-strong-9', CONSULTUM_MODEL_LOCAL_BASE_URL: 'http://x:1' });
   assert.equal(c.models.strong.id, 'claude-strong-9');
   assert.equal(c.models.local.baseUrl, 'http://x:1');
 });

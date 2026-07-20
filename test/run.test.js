@@ -37,7 +37,7 @@ test('runWithStdin KILLS a hung child and reports timedOut — the fail-fast gua
 });
 
 test('runWithStdin reports a spawn failure instead of throwing', async () => {
-  const res = await runWithStdin('askup-no-such-binary-xyz', [], { timeoutMs: 5_000 });
+  const res = await runWithStdin('consultum-no-such-binary-xyz', [], { timeoutMs: 5_000 });
   assert.equal(res.code, -1);
   assert.match(res.stderr, /ENOENT|not found|spawn/i);
 });

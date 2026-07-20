@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createProvider } from '../src/providers/index.js';
 
 function credFile(content) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'askup-p-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'consultum-p-'));
   const p = path.join(dir, 'cred');
   fs.writeFileSync(p, content);
   if (process.platform !== 'win32') fs.chmodSync(p, 0o600);
@@ -114,10 +114,10 @@ test('anthropic-cli: a secret in stderr is redacted before it lands in the error
 });
 
 test('openai: reads the key from api_key_file when the env var is unset', async () => {
-  delete process.env.ASKUP_TEST_OAI_FILE;
+  delete process.env.CONSULTUM_TEST_OAI_FILE;
   const keyFile = credFile('sk-from-file-xyz\n');
   const deps = fakeDeps({ http: () => ({ choices: [{ message: { content: 'advice' } }] }) });
-  const p = createProvider(model({ provider: 'openai', id: 'gpt', apiKeyEnv: 'ASKUP_TEST_OAI_FILE', apiKeyFile: keyFile, baseUrl: 'https://x' }), deps);
+  const p = createProvider(model({ provider: 'openai', id: 'gpt', apiKeyEnv: 'CONSULTUM_TEST_OAI_FILE', apiKeyFile: keyFile, baseUrl: 'https://x' }), deps);
   await p.invoke('q');
   assert.equal(deps.calls.httpPostJson[0].opts.headers.Authorization, 'Bearer sk-from-file-xyz');
 });
@@ -169,16 +169,16 @@ test('ollama: empty content errors', async () => {
 // ---- openai / openai-compatible -------------------------------------------
 
 test('openai: missing API key errors (chain-fallthrough semantics)', async () => {
-  delete process.env.ASKUP_TEST_OPENAI_KEY;
-  const p = createProvider(model({ provider: 'openai', id: 'gpt', apiKeyEnv: 'ASKUP_TEST_OPENAI_KEY' }), fakeDeps());
+  delete process.env.CONSULTUM_TEST_OPENAI_KEY;
+  const p = createProvider(model({ provider: 'openai', id: 'gpt', apiKeyEnv: 'CONSULTUM_TEST_OPENAI_KEY' }), fakeDeps());
   await assert.rejects(() => p.invoke('q'), (e) => e.kind === 'provider-error' && /not set/.test(e.message));
 });
 
 test('openai: with key, request-shaped, Bearer auth, text + usage', async () => {
-  process.env.ASKUP_TEST_OPENAI_KEY = 'sk-test';
+  process.env.CONSULTUM_TEST_OPENAI_KEY = 'sk-test';
   try {
     const deps = fakeDeps({ http: () => ({ choices: [{ message: { content: 'advice' } }], usage: { prompt_tokens: 5, completion_tokens: 3 } }) });
-    const p = createProvider(model({ provider: 'openai', id: 'gpt', apiKeyEnv: 'ASKUP_TEST_OPENAI_KEY', baseUrl: 'https://x' }), deps);
+    const p = createProvider(model({ provider: 'openai', id: 'gpt', apiKeyEnv: 'CONSULTUM_TEST_OPENAI_KEY', baseUrl: 'https://x' }), deps);
     const out = await p.invoke('q', { system: 'sys' });
     assert.equal(out.text, 'advice');
     assert.deepEqual(out.usage, { promptTokens: 5, completionTokens: 3 });
@@ -188,17 +188,17 @@ test('openai: with key, request-shaped, Bearer auth, text + usage', async () => 
     assert.ok(!('tools' in call.body));
     assert.equal(call.body.messages[0].role, 'system');
   } finally {
-    delete process.env.ASKUP_TEST_OPENAI_KEY;
+    delete process.env.CONSULTUM_TEST_OPENAI_KEY;
   }
 });
 
 // ---- anthropic-api ---------------------------------------------------------
 
 test('anthropic-api: request-shaped messages call with x-api-key, text from content blocks', async () => {
-  process.env.ASKUP_TEST_ANTHROPIC_KEY = 'sk-ant';
+  process.env.CONSULTUM_TEST_ANTHROPIC_KEY = 'sk-ant';
   try {
     const deps = fakeDeps({ http: () => ({ content: [{ text: 'ad' }, { text: 'vice' }], usage: { input_tokens: 9, output_tokens: 4 } }) });
-    const p = createProvider(model({ provider: 'anthropic-api', id: 'claude', apiKeyEnv: 'ASKUP_TEST_ANTHROPIC_KEY' }), deps);
+    const p = createProvider(model({ provider: 'anthropic-api', id: 'claude', apiKeyEnv: 'CONSULTUM_TEST_ANTHROPIC_KEY' }), deps);
     const out = await p.invoke('q');
     assert.equal(out.text, 'advice');
     assert.deepEqual(out.usage, { promptTokens: 9, completionTokens: 4 });
@@ -207,7 +207,7 @@ test('anthropic-api: request-shaped messages call with x-api-key, text from cont
     assert.equal(call.opts.headers['x-api-key'], 'sk-ant');
     assert.ok(!('tools' in call.body));
   } finally {
-    delete process.env.ASKUP_TEST_ANTHROPIC_KEY;
+    delete process.env.CONSULTUM_TEST_ANTHROPIC_KEY;
   }
 });
 

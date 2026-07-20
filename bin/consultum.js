@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// askup CLI entry — a thin wrapper. All logic lives in src/cli.js (unit-tested there). Reads the
+// consultum CLI entry — a thin wrapper. All logic lives in src/cli.js (unit-tested there). Reads the
 // question + context from STDIN for `consult` (never argv), maps commands, sets the process exit code.
 
 import { readFileSync } from 'fs';
@@ -17,7 +17,7 @@ function version() {
   }
 }
 
-// askup is invoked BY other programs, so its stdin is machine-generated and can be arbitrarily
+// consultum is invoked BY other programs, so its stdin is machine-generated and can be arbitrarily
 // large (a runaway log dump, a whole repo pasted as "context"). Reading it unbounded would buffer
 // the lot and then ship it to a paid provider. Cap it, and say so rather than truncating silently.
 const MAX_STDIN_BYTES = 1024 * 1024;
@@ -82,8 +82,8 @@ async function main() {
         try {
           process.exitCode = await runInitInteractive({ flags, out, err, ask });
         } catch (e) {
-          err(`askup init --interactive: ${e.message}`);
-          err('Run `askup init` (non-interactive) to write a template you can edit instead.');
+          err(`consultum init --interactive: ${e.message}`);
+          err('Run `consultum init` (non-interactive) to write a template you can edit instead.');
           process.exitCode = 10;
         } finally {
           rl.close();
@@ -93,12 +93,12 @@ async function main() {
       process.exitCode = runInit({ flags, out, err });
       return;
     default:
-      err(`askup: unknown command '${command}'\n\n${USAGE}`);
+      err(`consultum: unknown command '${command}'\n\n${USAGE}`);
       process.exitCode = 10;
   }
 }
 
 main().catch((e) => {
-  err(`askup: fatal: ${e.message}`);
+  err(`consultum: fatal: ${e.message}`);
   process.exitCode = 1;
 });

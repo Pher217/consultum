@@ -3,7 +3,7 @@
 // key is sent. The API key is read from the env var named by the model's `api_key_env`
 // (default OPENAI_API_KEY) — never from config.
 
-import { AskupError, KIND } from '../errors.js';
+import { ConsultumError, KIND } from '../errors.js';
 import { redactSecrets } from '../redact.js';
 import { resolveCredential } from '../credential.js';
 
@@ -18,7 +18,7 @@ export function create(model, deps) {
     model,
     async invoke(prompt, { timeoutMs = model.timeoutMs || DEFAULT_TIMEOUT_MS, system } = {}) {
       const key = resolveCredential({ envName: keyEnv, filePath: model.apiKeyFile, configDir: model.configDir, label: `${model.name} api key` });
-      if (!key) throw new AskupError(KIND.PROVIDER_ERROR, `no API key for model ${model.id} (${keyEnv} not set and no api_key_file)`);
+      if (!key) throw new ConsultumError(KIND.PROVIDER_ERROR, `no API key for model ${model.id} (${keyEnv} not set and no api_key_file)`);
       const messages = [];
       if (system) messages.push({ role: 'system', content: system });
       messages.push({ role: 'user', content: prompt });
@@ -30,10 +30,10 @@ export function create(model, deps) {
           { headers: { Authorization: `Bearer ${key}` }, timeoutMs },
         );
       } catch (err) {
-        throw new AskupError(KIND.PROVIDER_ERROR, `openai (${model.id}) failed: ${redactSecrets(err.message)}`, { cause: err });
+        throw new ConsultumError(KIND.PROVIDER_ERROR, `openai (${model.id}) failed: ${redactSecrets(err.message)}`, { cause: err });
       }
       const text = (data?.choices?.[0]?.message?.content || '').trim();
-      if (!text) throw new AskupError(KIND.PROVIDER_ERROR, `openai (${model.id}) returned no content`);
+      if (!text) throw new ConsultumError(KIND.PROVIDER_ERROR, `openai (${model.id}) returned no content`);
       const u = data.usage;
       const usage = u ? { promptTokens: u.prompt_tokens ?? null, completionTokens: u.completion_tokens ?? null } : undefined;
       return usage ? { text, usage } : { text };
