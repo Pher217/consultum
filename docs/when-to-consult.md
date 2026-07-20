@@ -1,6 +1,6 @@
 # When to consult (and when not)
 
-`askup` is for the hard moments — not routine work. Consulting has a token cost and a latency cost,
+`consultum` is for the hard moments — not routine work. Consulting has a token cost and a latency cost,
 and the advice is **untrusted until you verify it**. Use it deliberately.
 
 ## Consult when at least one holds
@@ -34,7 +34,7 @@ policy:
   min_attempts_before_debug_consult: 2
 ```
 
-`askup` also refuses a **near-identical re-consult** — each new call must add new evidence (a new test
+`consultum` also refuses a **near-identical re-consult** — each new call must add new evidence (a new test
 result, a new error, a repo discovery, a failed attempt, or a clarified requirement).
 
 ## The packet (what you send)
@@ -64,7 +64,7 @@ Approach · Why · Implementation Guidance · Alternatives · Risks · Validatio
 
 - confirm referenced files/functions/APIs exist and match your conventions;
 - apply the **smallest safe** change; run the validation plan;
-- **never pipe Implementation Guidance to a shell unexamined** — `askup` lints for embedded shell/
+- **never pipe Implementation Guidance to a shell unexamined** — `consultum` lints for embedded shell/
   network commands and surfaces warnings, but the final judgement is yours;
 - success needs implementation evidence + passing validation, not the advisor's confidence.
 

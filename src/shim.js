@@ -4,7 +4,7 @@
 // result, so failures come back as { ok: false, error: { kind, message } } (kinds match errors.js).
 
 import { consult } from './consult.js';
-import { AskupError, KIND } from './errors.js';
+import { ConsultumError, KIND } from './errors.js';
 
 // Provider-neutral JSON function schema. Also emitted verbatim to shim/tool-schema.json.
 export const TOOL_SCHEMA = {
@@ -38,7 +38,7 @@ export const TOOL_SCHEMA = {
 // args: { question, packet | context, sensitive? } (model-facing). opts: { config, deps, taskId,
 // state, curate, sourcePath }. sourcePath belongs in OPTS, not args: it is trusted host-side
 // sensitivity metadata that the integrator supplies, not something the weak worker sets.
-export async function askupTool(args = {}, opts = {}) {
+export async function consultumTool(args = {}, opts = {}) {
   try {
     const rec = await consult({
       question: args.question,
@@ -56,7 +56,7 @@ export async function askupTool(args = {}, opts = {}) {
     });
     return { ok: true, ...rec };
   } catch (err) {
-    if (err instanceof AskupError) return { ok: false, error: err.toJSON().error };
+    if (err instanceof ConsultumError) return { ok: false, error: err.toJSON().error };
     return { ok: false, error: { kind: KIND.PROVIDER_ERROR, message: err.message } };
   }
 }

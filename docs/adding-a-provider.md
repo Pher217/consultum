@@ -7,7 +7,7 @@ knows how to talk to a model host; everything else works in terms of the `invoke
 
 ```js
 // src/providers/<name>.js
-import { AskupError, KIND } from '../errors.js';
+import { ConsultumError, KIND } from '../errors.js';
 
 export function create(model, deps) {
   return {
@@ -24,7 +24,7 @@ export function create(model, deps) {
       // 5. Return { text, usage? } where usage = { promptTokens, completionTokens }.
       const data = await deps.httpPostJson(`${model.baseUrl}/...`, { model: model.id, /* ... */ }, { timeoutMs });
       const text = (data?.text || '').trim();
-      if (!text) throw new AskupError(KIND.PROVIDER_ERROR, `<name> (${model.id}) returned no content`);
+      if (!text) throw new ConsultumError(KIND.PROVIDER_ERROR, `<name> (${model.id}) returned no content`);
       return { text };
     },
   };
@@ -54,7 +54,7 @@ const FACTORIES = { /* ... */ 'my-provider': myProvider };
 ```
 
 Add `'my-provider'` to `KNOWN_PROVIDERS` in `src/config.js`, add a reachability branch to
-`defaultProbe` in `src/cli.js` (so `askup doctor` can report it), and add a contract test.
+`defaultProbe` in `src/cli.js` (so `consultum doctor` can report it), and add a contract test.
 
 ## Trust, not provider identity
 

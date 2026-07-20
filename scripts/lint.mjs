@@ -4,7 +4,7 @@ import { execFileSync } from 'child_process';
 import { readdirSync } from 'fs';
 
 const files = [
-  'bin/askup.js',
+  'bin/consultum.js',
   ...readdirSync('src').filter((f) => f.endsWith('.js')).map((f) => `src/${f}`),
   ...readdirSync('src/providers').filter((f) => f.endsWith('.js')).map((f) => `src/providers/${f}`),
 ];

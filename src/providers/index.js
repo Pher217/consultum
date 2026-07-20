@@ -3,7 +3,7 @@
 // provider. Adding a provider = one entry here + one module implementing `create(model, deps)`.
 
 import { defaultRuntime } from '../run.js';
-import { AskupError, KIND } from '../errors.js';
+import { ConsultumError, KIND } from '../errors.js';
 import { create as anthropicCli } from './anthropic-cli.js';
 import { create as anthropicApi } from './anthropic-api.js';
 import { create as openai } from './openai.js';
@@ -21,7 +21,7 @@ const FACTORIES = {
 
 export function createProvider(model, deps = defaultRuntime) {
   const factory = FACTORIES[model.provider];
-  if (!factory) throw new AskupError(KIND.USAGE, `no adapter for provider '${model.provider}'`);
+  if (!factory) throw new ConsultumError(KIND.USAGE, `no adapter for provider '${model.provider}'`);
   return factory(model, deps);
 }
 

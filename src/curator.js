@@ -19,7 +19,7 @@ export function buildTemplatePacket(question, context) {
     ctx,
     '',
     '## Notes',
-    'Assembled by askup’s deterministic template builder — no curator model was used. Verified facts',
+    'Assembled by consultum’s deterministic template builder — no curator model was used. Verified facts',
     'and assumptions are NOT separated here; the advisor should treat unlabeled context with caution.',
   ].join('\n');
 }

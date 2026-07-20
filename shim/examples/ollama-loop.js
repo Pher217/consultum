@@ -1,18 +1,18 @@
 // Drop-in: give an Ollama function-calling worker the ability to "ask up" when it's stuck.
 //
-// Register askup's tool schema alongside your worker's own tools. When the model calls
-// `consult_advisor`, run askupTool() and feed the JSON result back as the tool response. askup does
+// Register consultum's tool schema alongside your worker's own tools. When the model calls
+// `consult_advisor`, run consultumTool() and feed the JSON result back as the tool response. consultum does
 // the rest (redact -> curate|template -> advise over the fallback chain -> schema-validate + lint).
 //
-// Run: node shim/examples/ollama-loop.js   (requires Ollama running + an askup config; this is a
+// Run: node shim/examples/ollama-loop.js   (requires Ollama running + an consultum config; this is a
 // sketch you adapt to your loop — it is not executed by the test suite).
 
-import { askupTool, TOOL_SCHEMA } from 'askup'; // or: '../../src/index.js' from within this repo
+import { consultumTool, TOOL_SCHEMA } from 'consultum'; // or: '../../src/index.js' from within this repo
 
 const OLLAMA = process.env.OLLAMA_BASE || 'http://localhost:11434';
 const WORKER_MODEL = process.env.WORKER_MODEL || 'llama3.1:8b';
 
-// Your worker's tools + the askup escalation tool.
+// Your worker's tools + the consultum escalation tool.
 const tools = [/* ...your read_file/write_file/run_shell tools... */ TOOL_SCHEMA];
 
 async function chat(messages) {
@@ -38,8 +38,8 @@ export async function runWorker(task) {
     for (const tc of msg.tool_calls) {
       let result;
       if (tc.function.name === 'consult_advisor') {
-        // The one line that matters: hand the model's question + packet to askup.
-        result = await askupTool(tc.function.arguments); // { ok, recommendation, confidence, warnings, ... }
+        // The one line that matters: hand the model's question + packet to consultum.
+        result = await consultumTool(tc.function.arguments); // { ok, recommendation, confidence, warnings, ... }
       } else {
         result = { ok: false, error: { kind: 'usage', message: `unhandled tool ${tc.function.name}` } };
       }

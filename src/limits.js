@@ -3,11 +3,11 @@
 // --task-id is passed, persisting `state` to a JSON file). Without state there is nothing to count.
 //
 // NOTE: `min_attempts_before_debug_consult` is ADVISORY — it is documented guidance (docs/
-// when-to-consult.md) that the executor honors, not something the library can enforce (askup does not
+// when-to-consult.md) that the executor honors, not something the library can enforce (consultum does not
 // see the executor's attempt count). It is exposed in config so callers can read and apply it.
 
 import { createHash } from 'crypto';
-import { AskupError, KIND } from './errors.js';
+import { ConsultumError, KIND } from './errors.js';
 
 const SEP = '\u0000'; // NUL separator, written as an ASCII escape so this file stays text: a raw NUL
 // byte makes git classify the source as binary and hides its diff from review entirely.
@@ -24,13 +24,13 @@ export function consultSignature(question, context) {
 export function checkConsultLimit(state, taskId, sig, policy) {
   const prior = state[taskId] || [];
   if (prior.length >= policy.max_consults_per_task) {
-    throw new AskupError(
+    throw new ConsultumError(
       KIND.LIMIT_EXCEEDED,
       `max_consults_per_task (${policy.max_consults_per_task}) reached for task '${taskId}'`,
     );
   }
   if (prior.includes(sig)) {
-    throw new AskupError(
+    throw new ConsultumError(
       KIND.LIMIT_EXCEEDED,
       `re-consult with identical content for task '${taskId}' — add new evidence (a test result, error, or discovery) before consulting again`,
     );

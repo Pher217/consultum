@@ -1,13 +1,13 @@
 # Architecture
 
-`askup` is a small library + CLI (Node, ESM). It does one thing: **controlled escalation from a
+`consultum` is a small library + CLI (Node, ESM). It does one thing: **controlled escalation from a
 weaker executor to a stronger advisor**, with optional context curation and safety controls.
 
 ## Flow
 
 ```
 Executor (any model/engine, stuck)
-  -> askup consult (question + rough context, {sensitivity})
+  -> consultum consult (question + rough context, {sensitivity})
        1. redact secrets            (local, deterministic, best-effort)
        2. curate (optional)         (high-context cheap model -> structured packet)
                                      or a deterministic template builder if no curator configured
@@ -26,7 +26,7 @@ the advisor self-reports confidence below `panel_threshold`. Panelists (`roles.p
 **concurrently**, are trust-filtered exactly like the advisor, and a failing panelist is recorded
 without sinking the panel. Two deliberate honesty rules:
 
-- **askup does not judge whether the views agree.** Free-text agreement detection is not
+- **consultum does not judge whether the views agree.** Free-text agreement detection is not
   deterministic, so with no `roles.reconciler` configured the panel reports `agreement: "unassessed"`
   and shows every view — it will not manufacture a consensus verdict.
 - **A reconciler that fails is reported as `reconciler-failed`**, never silently downgraded to
@@ -90,8 +90,8 @@ trade-off (open egress = a compromised worker can exfiltrate).
 
 ## Interfaces
 
-- **CLI:** `askup consult --context - [--sensitive] [--no-curate] [--json]` (question/context via stdin);
-  plus `askup init | doctor | config`. Distinct exit codes: ok / refused-by-policy / provider-error /
+- **CLI:** `consultum consult --context - [--sensitive] [--no-curate] [--json]` (question/context via stdin);
+  plus `consultum init | doctor | config`. Distinct exit codes: ok / refused-by-policy / provider-error /
   limit-exceeded / low-confidence.
 - **Library:** `consult({ question, context, sensitive }) -> StructuredRecommendation`.
 - **Tool-loop shim (v0.1):** a JSON tool-schema + drop-in examples for an Ollama tool loop and

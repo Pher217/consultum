@@ -210,13 +210,13 @@ policy:
 test('a credential/config (USAGE) error fails loud — it does NOT silently fall through to the next advisor', async () => {
   // adv (openai) has an api_key_file that violates the shape gate (multi-line) -> USAGE from resolveCredential.
   // The chain must abort with USAGE, not try `local` next.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'askup-ct-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'consultum-ct-'));
   const badKey = path.join(dir, 'k');
   fs.writeFileSync(badKey, 'line1\nline2\n');
   if (process.platform !== 'win32') fs.chmodSync(badKey, 0o600);
   const cfg = parseConfig(`
 models:
-  adv:   { provider: openai, id: gpt, trust: trusted, api_key_env: ASKUP_UNSET_KEY_X, api_key_file: ${badKey} }
+  adv:   { provider: openai, id: gpt, trust: trusted, api_key_env: CONSULTUM_UNSET_KEY_X, api_key_file: ${badKey} }
   local: { provider: ollama, id: adv-model, trust: trusted }
 roles:
   advisor: [adv, local]

@@ -1,4 +1,4 @@
-// Hand-written types for the published surface. askup is plain JS; these exist so a TypeScript
+// Hand-written types for the published surface. consultum is plain JS; these exist so a TypeScript
 // consumer gets the StructuredRecommendation shape without reading the source, and so editors can
 // hover-document it for JS consumers too.
 
@@ -25,7 +25,7 @@ export interface ModelSpec {
   timeoutMs?: number;
 }
 
-export interface AskupConfig {
+export interface ConsultumConfig {
   path?: string | null;
   models: Record<string, ModelSpec>;
   roles: { advisor: string[]; curator?: string };
@@ -86,7 +86,7 @@ export interface ConsultOptions {
   curate?: boolean;
   /** Host-supplied path used for per-path sensitivity rules. Not worker-controlled. */
   sourcePath?: string | null;
-  config?: AskupConfig;
+  config?: ConsultumConfig;
   deps?: unknown;
   taskId?: string | null;
   state?: Record<string, unknown> | null;
@@ -96,7 +96,7 @@ export interface ConsultOptions {
 
 /**
  * Run one consult. Never decides — returns a recommendation for the caller to weigh.
- * Throws {@link AskupError} rather than silently downgrading a sensitive request.
+ * Throws {@link ConsultumError} rather than silently downgrading a sensitive request.
  */
 export function consult(options: ConsultOptions): Promise<StructuredRecommendation>;
 
@@ -108,7 +108,7 @@ export type ErrorKind =
   | 'low-confidence'
   | 'malformed-output';
 
-export class AskupError extends Error {
+export class ConsultumError extends Error {
   kind: ErrorKind;
   constructor(kind: ErrorKind, message: string, options?: { cause?: unknown });
 }
@@ -120,8 +120,8 @@ export const EXIT: Record<string, number>;
 
 export function exitCodeForKind(kind: ErrorKind): number;
 
-export function loadConfig(options?: { configPath?: string }): AskupConfig;
-export function parseConfig(yaml: string, filename?: string): AskupConfig;
+export function loadConfig(options?: { configPath?: string }): ConsultumConfig;
+export function parseConfig(yaml: string, filename?: string): ConsultumConfig;
 
 /** Best-effort redaction of common secret shapes. Not a defense against adversarial encoding. */
 export function redactSecrets(text: string): string;
@@ -129,7 +129,7 @@ export function redactSecrets(text: string): string;
 /** JSON Schema for the tool-loop shim's `consult` tool. */
 export const TOOL_SCHEMA: Record<string, unknown>;
 
-export function askupTool(
+export function consultumTool(
   args: { question: string; context?: string },
   opts?: Omit<ConsultOptions, 'question' | 'context'>,
 ): Promise<{ ok: true; recommendation: StructuredRecommendation } | { ok: false; error: string }>;

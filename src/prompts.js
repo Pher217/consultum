@@ -48,8 +48,8 @@ export const ADVISOR_SYSTEM =
 // forge the closing marker and "break out" of the data region.
 export function wrapUntrusted(content) {
   const nonce = randomUUID();
-  const open = `<<<ASKUP-UNTRUSTED-DATA ${nonce}>>>`;
-  const close = `<<<END-ASKUP-UNTRUSTED-DATA ${nonce}>>>`;
+  const open = `<<<CONSULTUM-UNTRUSTED-DATA ${nonce}>>>`;
+  const close = `<<<END-CONSULTUM-UNTRUSTED-DATA ${nonce}>>>`;
   return `${open}\n${content}\n${close}`;
 }
 

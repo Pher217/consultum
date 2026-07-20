@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a problem with askup
+about: Report a problem with consultum
 title: ''
 labels: bug
 assignees: ''
@@ -10,18 +10,18 @@ assignees: ''
 A clear, concise description of what went wrong.
 
 **Environment**
-- askup version: <!-- `askup --version` or the installed package version -->
+- consultum version: <!-- `consultum --version` or the installed package version -->
 - Node version: <!-- `node --version` -->
 - OS: <!-- e.g. macOS 14, Ubuntu 22.04, Windows 11 -->
 - Provider / adapter involved: <!-- e.g. anthropic-cli, openai, ollama, codex-cli -->
 
-**`askup doctor` output**
+**`consultum doctor` output**
 ```
-<!-- paste the full output of `askup doctor` here -->
+<!-- paste the full output of `consultum doctor` here -->
 ```
 
 **Exit code**
-<!-- the exit code askup returned, if applicable -->
+<!-- the exit code consultum returned, if applicable -->
 
 **Steps to reproduce**
 1.

@@ -1,4 +1,4 @@
-# askup — minimal working config. Secrets live in env vars, never here.
+# consultum — minimal working config. Secrets live in env vars, never here.
 # trust: local | trusted | untrusted   (a sensitive request uses trusted/local only)
 models:
   claude:  { provider: anthropic-cli, id: claude-claude-4-8, trust: trusted }   # subscription token or ANTHROPIC_API_KEY

@@ -8,7 +8,7 @@ import { readCredentialFile, resolveCredential } from '../src/credential.js';
 const POSIX = process.platform !== 'win32';
 
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'askup-cred-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'consultum-cred-'));
 }
 function writeFile(dir, name, content, mode = 0o600) {
   const p = path.join(dir, name);
@@ -57,11 +57,11 @@ if (POSIX) {
   test('the perm check can be overridden for container mounts', () => {
     const dir = tmp();
     const p = writeFile(dir, 'loose', 'abc', 0o644);
-    process.env.ASKUP_ALLOW_INSECURE_CREDENTIAL_PERMS = '1';
+    process.env.CONSULTUM_ALLOW_INSECURE_CREDENTIAL_PERMS = '1';
     try {
       assert.equal(readCredentialFile(p), 'abc');
     } finally {
-      delete process.env.ASKUP_ALLOW_INSECURE_CREDENTIAL_PERMS;
+      delete process.env.CONSULTUM_ALLOW_INSECURE_CREDENTIAL_PERMS;
     }
   });
 }
@@ -69,12 +69,12 @@ if (POSIX) {
 test('resolveCredential prefers env, falls back to file, else null', () => {
   const dir = tmp();
   const p = writeFile(dir, 'tok', 'from-file');
-  process.env.ASKUP_TEST_CRED = 'from-env';
+  process.env.CONSULTUM_TEST_CRED = 'from-env';
   try {
-    assert.equal(resolveCredential({ envName: 'ASKUP_TEST_CRED', filePath: p }), 'from-env');
+    assert.equal(resolveCredential({ envName: 'CONSULTUM_TEST_CRED', filePath: p }), 'from-env');
   } finally {
-    delete process.env.ASKUP_TEST_CRED;
+    delete process.env.CONSULTUM_TEST_CRED;
   }
-  assert.equal(resolveCredential({ envName: 'ASKUP_TEST_CRED_UNSET', filePath: p }), 'from-file');
-  assert.equal(resolveCredential({ envName: 'ASKUP_TEST_CRED_UNSET' }), null);
+  assert.equal(resolveCredential({ envName: 'CONSULTUM_TEST_CRED_UNSET', filePath: p }), 'from-file');
+  assert.equal(resolveCredential({ envName: 'CONSULTUM_TEST_CRED_UNSET' }), null);
 });

@@ -1,15 +1,15 @@
 // The escalation panel (spec §8): when the primary advisor is unsure — or the caller forces it —
 // convene 2+ INDEPENDENT advisors concurrently and surface their views.
 //
-// THE HONEST PART: askup does NOT compute an agreement verdict over free text. Deciding
+// THE HONEST PART: consultum does NOT compute an agreement verdict over free text. Deciding
 // whether two prose recommendations "agree" is not deterministic, and a cheap string/keyword check
 // would be a confident lie in exactly the place a caller is most likely to trust it. So:
 //   - with a `reconciler` configured -> a REAL model pass synthesizes the views and names the dissent
 //   - without one -> the raw views are returned, `agreement: 'unassessed'`, and nothing is claimed
-// Either way every panelist's view stays visible. askup never decides; the caller does.
+// Either way every panelist's view stays visible. consultum never decides; the caller does.
 
 import { createProvider } from './providers/index.js';
-import { AskupError, KIND } from './errors.js';
+import { ConsultumError, KIND } from './errors.js';
 import { redactSecrets } from './redact.js';
 
 export const RECONCILER_SYSTEM =
@@ -52,7 +52,7 @@ export async function convenePanel(panelists, { prompt, system, timeoutMs, deps,
     } else {
       // A credential/config error is the user's to fix — surface it rather than burying it as
       // "a panelist was flaky" (mirrors the ladder's fail-loud rule).
-      if (s.reason instanceof AskupError && s.reason.kind === KIND.USAGE) throw s.reason;
+      if (s.reason instanceof ConsultumError && s.reason.kind === KIND.USAGE) throw s.reason;
       failures.push(`${model.name}: ${s.reason?.message ?? String(s.reason)}`);
     }
   });
@@ -115,7 +115,7 @@ export async function reconcile(reconciler, { question, views, primary = null, t
         over: (primary ? [primary.model] : []).concat(views.map((v) => v.model)),
       };
     } catch (err) {
-      if (err instanceof AskupError && err.kind === KIND.USAGE) throw err;
+      if (err instanceof ConsultumError && err.kind === KIND.USAGE) throw err;
       if (attempt === 1 || err.kind !== KIND.MALFORMED_OUTPUT) {
         return { status: 'failed', model: reconciler.id, error: err.message };
       }

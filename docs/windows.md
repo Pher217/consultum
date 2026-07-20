@@ -1,6 +1,6 @@
 # Windows support matrix
 
-`askup` is Node/ESM and runs on Windows, but the CLI-shelling adapters carry POSIX-isms that are
+`consultum` is Node/ESM and runs on Windows, but the CLI-shelling adapters carry POSIX-isms that are
 worth knowing. The HTTP adapters are fully cross-platform.
 
 | Adapter | Windows status | Notes |
@@ -24,7 +24,7 @@ File-based credentials (`token_file` / `api_key_file`) are perm-checked on POSIX
 accessible file is refused (`chmod 600`). **On Windows this check is skipped**, because Node's
 `fs.stat().mode` does not carry meaningful POSIX permission bits there. The single-line and size-cap
 gates still apply. Protect credential files with NTFS ACLs, and keep them outside any repo (they are
-gitignored by pattern). The `ASKUP_ALLOW_INSECURE_CREDENTIAL_PERMS=1` escape hatch is a no-op on
+gitignored by pattern). The `CONSULTUM_ALLOW_INSECURE_CREDENTIAL_PERMS=1` escape hatch is a no-op on
 Windows (the check is already skipped). Env injection into a subprocess (`token_file`) works
 identically on Windows.
 
@@ -32,4 +32,4 @@ identically on Windows.
 
 On Windows, prefer the HTTP adapters (`anthropic-api`, `openai`, `ollama`) for the advisor role. Use
 `anthropic-cli` / `codex-cli` only when you specifically want the subscription-token / sandbox path,
-and confirm the CLI is on PATH with `askup doctor`.
+and confirm the CLI is on PATH with `consultum doctor`.

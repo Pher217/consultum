@@ -1,18 +1,18 @@
 {
-  "name": "askup",
+  "name": "consultum",
   "version": "0.1.0",
   "description": "An advisory channel for delegated AI workers — escalate a curated problem to a stronger model when a cheap worker gets stuck.",
   "type": "module",
-  "bin": { "askup": "bin/askup.js" },
+  "bin": { "consultum": "bin/consultum.js" },
   "types": "./types/index.d.ts",
   "exports": {
     ".": { "types": "./types/index.d.ts", "default": "./src/index.js" },
     "./package.json": "./package.json"
   },
   "files": ["bin", "src", "shim", "types", "config.example.yaml", "README.md", "LICENSE", "SECURITY.md", "CHANGELOG.md", "docs"],
-  "repository": { "type": "git", "url": "git+https://github.com/Pher217/askup.git" },
-  "homepage": "https://github.com/Pher217/askup#readme",
-  "bugs": { "url": "https://github.com/Pher217/askup/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/Pher217/consultum.git" },
+  "homepage": "https://github.com/Pher217/consultum#readme",
+  "bugs": { "url": "https://github.com/Pher217/consultum/issues" },
   "scripts": {
     "test": "node --test",
     "lint": "node scripts/lint.mjs",

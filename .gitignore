@@ -7,8 +7,8 @@ dist/
 # never commit credentials/tokens
 *oauth-token*
 *.credentials.json
-askup.local.yaml
-/askup.yaml
+consultum.local.yaml
+/consultum.yaml
 coverage/
 # Local agent/editor scratch — never publish internal planning artifacts
 .claude/

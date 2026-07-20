@@ -6,7 +6,7 @@
 //      caller (and a human) can see "this advice contains a runnable command" before acting on it.
 // The hard rule (docs): implementation guidance is never piped to a shell unexamined.
 
-import { AskupError, KIND } from './errors.js';
+import { ConsultumError, KIND } from './errors.js';
 import { ADVISOR_SECTIONS } from './prompts.js';
 
 // A few tolerant aliases for the two required headers (models paraphrase).
@@ -95,7 +95,7 @@ export function parseConfidence(text) {
 // contract is not met (required sections missing / confidence unparseable).
 export function parseRecommendation(text, { panelThreshold = 70 } = {}) {
   if (typeof text !== 'string' || !text.trim()) {
-    throw new AskupError(KIND.MALFORMED_OUTPUT, 'advisor returned empty output');
+    throw new ConsultumError(KIND.MALFORMED_OUTPUT, 'advisor returned empty output');
   }
   const lines = text.split('\n');
   const sections = {};
@@ -161,11 +161,11 @@ export function parseRecommendation(text, { panelThreshold = 70 } = {}) {
   }
 
   if (!rec.recommendation) {
-    throw new AskupError(KIND.MALFORMED_OUTPUT, 'advisor output missing required "Recommended Approach" section');
+    throw new ConsultumError(KIND.MALFORMED_OUTPUT, 'advisor output missing required "Recommended Approach" section');
   }
   const confidence = parseConfidence(sections.confidence);
   if (confidence === null) {
-    throw new AskupError(KIND.MALFORMED_OUTPUT, 'advisor output missing a parseable "Confidence" (0-100) value');
+    throw new ConsultumError(KIND.MALFORMED_OUTPUT, 'advisor output missing a parseable "Confidence" (0-100) value');
   }
   rec.confidence = confidence;
   rec.lowConfidence = rec.confidence < panelThreshold;

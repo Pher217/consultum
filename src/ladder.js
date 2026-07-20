@@ -5,7 +5,7 @@
 // guardrail into the adapter contract.
 
 import { createProvider } from './providers/index.js';
-import { AskupError, KIND } from './errors.js';
+import { ConsultumError, KIND } from './errors.js';
 
 const RETRY_NUDGE =
   '\n\nNOTE: your previous response did not follow the required format. Respond again using EXACTLY ' +
@@ -27,7 +27,7 @@ export async function adviseWithChain(chain, { prompt, system, timeoutMs, deps, 
     } catch (err) {
       // A credential/config error (USAGE) is the user's to fix — fail loud, do not silently try the
       // next advisor with (e.g.) a bad-perms token file.
-      if (err instanceof AskupError && err.kind === KIND.USAGE) throw err;
+      if (err instanceof ConsultumError && err.kind === KIND.USAGE) throw err;
       providerErrors.push(`${model.name}: ${err.message}`);
       continue; // provider down/stalled/empty → next advisor
     }
@@ -43,7 +43,7 @@ export async function adviseWithChain(chain, { prompt, system, timeoutMs, deps, 
         const rec = parse(second.text);
         return { model, rec, text: second.text, usage: second.usage };
       } catch (err2) {
-        if (err2 instanceof AskupError && err2.kind === KIND.USAGE) throw err2; // config/credential error — fail loud (mirror the first-invoke path)
+        if (err2 instanceof ConsultumError && err2.kind === KIND.USAGE) throw err2; // config/credential error — fail loud (mirror the first-invoke path)
         if (err2.kind === KIND.MALFORMED_OUTPUT) {
           malformedErrors.push(`${model.name}: ${err2.message}`);
           continue; // still malformed after retry → next advisor
@@ -55,12 +55,12 @@ export async function adviseWithChain(chain, { prompt, system, timeoutMs, deps, 
   }
 
   if (malformedErrors.length && !providerErrors.length) {
-    throw new AskupError(
+    throw new ConsultumError(
       KIND.MALFORMED_OUTPUT,
       `every advisor produced unparseable output after one retry: ${malformedErrors.join(' | ')}`,
     );
   }
-  throw new AskupError(
+  throw new ConsultumError(
     KIND.PROVIDER_ERROR,
     `no advisor in the chain was reachable: ${[...providerErrors, ...malformedErrors].join(' | ')}`,
   );

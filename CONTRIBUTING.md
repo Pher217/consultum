@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for considering a contribution to `askup`.
+Thanks for considering a contribution to `consultum`.
 
 ## Setup
 
