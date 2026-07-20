@@ -47,6 +47,11 @@ test('parseArgs collects flags and command', () => {
   assert.equal(flags.config, 'c.yaml');
 });
 
+test('parseArgs recognizes --version / -v', () => {
+  assert.equal(parseArgs(['--version']).flags.version, true);
+  assert.equal(parseArgs(['-v']).flags.version, true);
+});
+
 test('parseArgs --no-curate sets curate false, --curate sets true', () => {
   assert.equal(parseArgs(['consult', '--no-curate']).flags.curate, false);
   assert.equal(parseArgs(['consult', '--curate']).flags.curate, true);

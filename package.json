@@ -14,7 +14,8 @@
   "bugs": { "url": "https://github.com/Pher217/askup/issues" },
   "scripts": {
     "test": "node --test",
-    "lint": "node --check bin/askup.js && for f in src/*.js src/providers/*.js; do node --check \"$f\"; done"
+    "lint": "node scripts/lint.mjs",
+    "prepublishOnly": "npm test"
   },
   "keywords": ["llm", "advisory", "escalation", "multi-model", "orchestration", "ollama", "codex", "anthropic", "ai-agents", "read-only-advisor"],
   "license": "MIT",

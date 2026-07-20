@@ -4,8 +4,8 @@
 
 ## Reporting a vulnerability
 
-Please open a private security advisory on GitHub (Security → Report a vulnerability),
-or email the maintainer. Do not open a public issue for security problems.
+Please open a private security advisory on GitHub (Security → Report a vulnerability).
+Do not open a public issue for security problems.
 
 ## What askup does and does not protect
 

@@ -3,24 +3,10 @@
 All notable changes to askup are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
-## [Unreleased]
+## [0.1.0] — 2026-07-20
 
-### Added
-- **Cross-engine setup ease** — keychain-free auth (`token_file`/`token_env` for CLI adapters injected
-  into the subprocess env; `api_key_file` for HTTP adapters) via a shared credential resolver with
-  safety gates (single line, ≤4 KB, POSIX perm hard-fail, config-relative paths).
-- `askup doctor` **credential-free diagnostics** — classifies `ok | not-authed | egress-blocked |
-  dns-fail | not-on-path`, hints at a blocked sandbox, and exits non-zero when no advisor is usable.
-- `askup init --sandbox` — HTTP-only preset for callers inside a restricted sandbox, plus
-  `docs/sandboxed-callers.md`.
-
-### Security
-- Adapter stderr / HTTP error bodies are redacted before entering error messages.
-- Threat model names the config file as trusted input (A7), with the `base_url` exfil residual stated.
-
-## [0.1.0] — 2026-07-19
-
-First working release. Provider-agnostic advisory-escalation channel for delegated AI workers.
+First release. Provider-agnostic advisory-escalation channel for delegated AI workers: when a cheap
+worker gets stuck, it escalates a curated, secret-redacted problem to a stronger read-only advisor.
 
 ### Added
 - `consult` (single advisor + optional curator, off by default, with a deterministic template
@@ -31,6 +17,13 @@ First working release. Provider-agnostic advisory-escalation channel for delegat
   (`consult`, `askupTool`), and a tool-loop shim (`consult_advisor` schema + Ollama/OpenAI examples).
 - One config file (role→model with a user-assigned `local | trusted | untrusted` trust class);
   ≤15-line working example.
+- **Keychain-free auth** — `token_file`/`token_env` (CLI adapters, injected into the subprocess env)
+  and `api_key_file` (HTTP adapters), via a shared credential resolver with safety gates (single
+  line, ≤4 KB, POSIX perm hard-fail, config-relative paths).
+- `askup doctor` **credential-free diagnostics** — classifies `ok | not-authed | egress-blocked |
+  dns-fail | not-on-path`, hints at a blocked sandbox, exits non-zero when no advisor is usable.
+- `askup init --sandbox` — HTTP-only preset for callers inside a restricted sandbox, plus
+  `docs/sandboxed-callers.md`.
 - Machine-readable exit codes, token/cost provenance, Windows support matrix.
 
 ### Security
@@ -38,9 +31,10 @@ First working release. Provider-agnostic advisory-escalation channel for delegat
   directory-scoped (read-only only).
 - Fail-closed sensitivity (config-level `default_sensitive` + per-path; `--sensitive` escalate-only);
   a sensitive request with no trusted/local advisor **refuses**, never downgrades.
-- Best-effort secret redaction before every cross-model send (10-case regression).
+- Best-effort secret redaction before every cross-model send (10-case regression); adapter
+  stderr / HTTP error bodies redacted before entering error messages.
 - Advisor output schema-validated and linted for embedded shell/network commands.
+- Threat model names the config file as trusted input (A7).
 - **No telemetry.**
 
-[Unreleased]: https://github.com/Pher217/askup/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Pher217/askup/releases/tag/v0.1.0

@@ -2,7 +2,7 @@
 
 > An advisory channel for delegated AI workers. When a cheap worker gets stuck, it can **ask up** — escalate a curated problem to a stronger model — instead of guessing.
 
-**Status: v0.1 implemented.** [`npm install`](package.json) then `askup init` / `askup doctor` / `askup consult`. 121 tests passing, security-first (see below). See [`docs/architecture.md`](docs/architecture.md) and [`docs/threat-model.md`](docs/threat-model.md).
+**Status: v0.1 implemented.** `npm install -g askup` (or `npx askup`), then `askup init` → `askup doctor` → `askup consult`. Security-first (see below). See [`docs/architecture.md`](docs/architecture.md) and [`docs/threat-model.md`](docs/threat-model.md).
 
 *(`askup` is a working name — will be finalized against npm/PyPI/GitHub availability before the first release.)*
 
