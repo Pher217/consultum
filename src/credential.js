@@ -1,4 +1,4 @@
-// Credential resolution for adapters — one place so the safety gates exist exactly once (Fable
+// Credential resolution for adapters — one place so the safety gates exist exactly once (
 // review). A credential may come from an env var (12-factor, preferred) or a file (the keychain-free
 // path for sandboxed callers). File reads are the risky part: a config an attacker can write could
 // point `api_key_file` at an SSH key or `.env` and exfiltrate it as a Bearer header (threat-model A7).

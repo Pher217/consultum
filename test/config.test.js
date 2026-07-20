@@ -15,13 +15,13 @@ import {
 
 const VALID = `
 models:
-  opus:  { provider: anthropic-cli, id: claude-opus-4-8, trust: trusted }
-  sol:   { provider: codex-cli,     id: gpt-5.6-sol,     trust: untrusted }
-  glm:   { provider: ollama,        id: glm-5.2:cloud,   trust: untrusted }
+  strong:  { provider: anthropic-cli, id: claude-strong-4-8, trust: trusted }
+  gpt:   { provider: codex-cli,     id: gpt-5.6-gpt,     trust: untrusted }
+  curatorm:   { provider: ollama,        id: curatorm-5.2:cloud,   trust: untrusted }
   local: { provider: ollama,        id: gemma3:27b,      trust: local }
 roles:
-  advisor: [opus, sol]
-  curator: glm
+  advisor: [strong, gpt]
+  curator: curatorm
 policy:
   default_sensitive: false
 `;
@@ -32,10 +32,10 @@ function tmpdir() {
 
 test('parseConfig normalizes models, roles, and applies policy defaults', () => {
   const c = parseConfig(VALID, 'test.yaml');
-  assert.equal(c.models.opus.provider, 'anthropic-cli');
-  assert.equal(c.models.opus.trust, 'trusted');
-  assert.deepEqual(c.roles.advisor, ['opus', 'sol']);
-  assert.equal(c.roles.curator, 'glm');
+  assert.equal(c.models.strong.provider, 'anthropic-cli');
+  assert.equal(c.models.strong.trust, 'trusted');
+  assert.deepEqual(c.roles.advisor, ['strong', 'gpt']);
+  assert.equal(c.roles.curator, 'curatorm');
   // defaults
   assert.equal(c.policy.max_consults_per_task, 3);
   assert.equal(c.policy.panel_threshold, 70);
@@ -45,13 +45,13 @@ test('parseConfig normalizes models, roles, and applies policy defaults', () => 
 test('parseConfig reads token_file/token_env/api_key_file onto the model entry', () => {
   const c = parseConfig(`
 models:
-  opus: { provider: anthropic-cli, id: x, trust: trusted, token_file: ./tok, token_env: CLAUDE_CODE_OAUTH_TOKEN }
+  strong: { provider: anthropic-cli, id: x, trust: trusted, token_file: ./tok, token_env: CLAUDE_CODE_OAUTH_TOKEN }
   gpt:  { provider: openai, id: y, trust: untrusted, api_key_env: OPENAI_API_KEY, api_key_file: ./key }
 roles:
-  advisor: [opus, gpt]
+  advisor: [strong, gpt]
 `);
-  assert.equal(c.models.opus.tokenFile, './tok');
-  assert.equal(c.models.opus.tokenEnv, 'CLAUDE_CODE_OAUTH_TOKEN');
+  assert.equal(c.models.strong.tokenFile, './tok');
+  assert.equal(c.models.strong.tokenEnv, 'CLAUDE_CODE_OAUTH_TOKEN');
   assert.equal(c.models.gpt.apiKeyFile, './key');
 });
 
@@ -92,7 +92,7 @@ test('tools reject shell/network names (only read-only fs tools may be granted)'
 });
 
 test('policy: a mistyped default_sensitive (string) is a config error, not a silent fail-open', () => {
-  // Regression for Sol finding 3: "true" (string) must NOT be accepted and resolve as non-sensitive.
+  // Regression: "true" (string) must NOT be accepted and resolve as non-sensitive.
   assert.throws(
     () => parseConfig(`models:\n  o: { provider: anthropic-cli, id: x, trust: trusted }\nroles:\n  advisor: o\npolicy:\n  default_sensitive: "true"\n`),
     (e) => e.kind === 'usage' && /default_sensitive must be a boolean/.test(e.message),
@@ -108,7 +108,7 @@ test('policy: numeric fields are range-validated', () => {
 
 test('sensitive_paths glob matches at the root and across segments, and normalizes backslashes', () => {
   const c = parseConfig(`models:\n  o: { provider: anthropic-cli, id: x, trust: trusted }\nroles:\n  advisor: o\npolicy:\n  sensitive_paths: ["**/secrets/**"]\n`);
-  assert.equal(isSensitive(c, { sourcePath: 'secrets/db.txt' }), true); // root (Sol finding 8)
+  assert.equal(isSensitive(c, { sourcePath: 'secrets/db.txt' }), true); // root
   assert.equal(isSensitive(c, { sourcePath: 'a/b/secrets/db.txt' }), true); // nested
   assert.equal(isSensitive(c, { sourcePath: 'app\\secrets\\db.txt' }), true); // windows separators
   assert.equal(isSensitive(c, { sourcePath: 'app/main.js' }), false);
@@ -141,26 +141,26 @@ test('loadConfig throws USAGE when no config exists', () => {
 
 test('applyEnvOverrides overrides id and base_url by model name', () => {
   const c = parseConfig(VALID);
-  applyEnvOverrides(c, { ASKUP_MODEL_OPUS_ID: 'claude-opus-9', ASKUP_MODEL_LOCAL_BASE_URL: 'http://x:1' });
-  assert.equal(c.models.opus.id, 'claude-opus-9');
+  applyEnvOverrides(c, { ASKUP_MODEL_STRONG_ID: 'claude-strong-9', ASKUP_MODEL_LOCAL_BASE_URL: 'http://x:1' });
+  assert.equal(c.models.strong.id, 'claude-strong-9');
   assert.equal(c.models.local.baseUrl, 'http://x:1');
 });
 
 test('resolveAdvisorChain preserves order when not sensitive', () => {
   const c = parseConfig(VALID);
   const chain = resolveAdvisorChain(c, { sensitive: false });
-  assert.deepEqual(chain.map((m) => m.name), ['opus', 'sol']);
+  assert.deepEqual(chain.map((m) => m.name), ['strong', 'gpt']);
 });
 
 test('resolveAdvisorChain drops untrusted advisors when sensitive', () => {
   const c = parseConfig(VALID);
   const chain = resolveAdvisorChain(c, { sensitive: true });
-  // sol is untrusted -> filtered; opus (trusted) survives
-  assert.deepEqual(chain.map((m) => m.name), ['opus']);
+  // gpt is untrusted -> filtered; strong (trusted) survives
+  assert.deepEqual(chain.map((m) => m.name), ['strong']);
 });
 
 test('resolveAdvisorChain can return [] when a sensitive request has only untrusted advisors', () => {
-  const c = parseConfig(`models:\n  sol: { provider: codex-cli, id: g, trust: untrusted }\nroles:\n  advisor: [sol]\n`);
+  const c = parseConfig(`models:\n  gpt: { provider: codex-cli, id: g, trust: untrusted }\nroles:\n  advisor: [gpt]\n`);
   assert.deepEqual(resolveAdvisorChain(c, { sensitive: true }), []);
 });
 
@@ -168,8 +168,8 @@ test('resolveCurator: omitted -> null; untrusted+sensitive -> null; trusted+sens
   const noCur = parseConfig(`models:\n  o: { provider: anthropic-cli, id: x, trust: trusted }\nroles:\n  advisor: o\n`);
   assert.equal(resolveCurator(noCur, { sensitive: false }), null);
 
-  const c = parseConfig(VALID); // curator glm is untrusted
-  assert.equal(resolveCurator(c, { sensitive: false }).name, 'glm');
+  const c = parseConfig(VALID); // curator curatorm is untrusted
+  assert.equal(resolveCurator(c, { sensitive: false }).name, 'curatorm');
   assert.equal(resolveCurator(c, { sensitive: true }), null); // fail-closed skip
 
   const trustedCur = parseConfig(`models:\n  o: { provider: anthropic-cli, id: x, trust: trusted }\n  cur: { provider: ollama, id: y, trust: local }\nroles:\n  advisor: o\n  curator: cur\n`);

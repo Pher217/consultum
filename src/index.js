@@ -8,6 +8,8 @@
 
 export { consult } from './consult.js';
 export { askupTool, TOOL_SCHEMA } from './shim.js';
-export { loadConfig } from './config.js';
+// parseConfig lets a consumer build a config from a YAML string (or a generated one) without
+// touching disk — previously that meant reaching into askup/src/config.js past the export map.
+export { loadConfig, parseConfig } from './config.js';
 export { AskupError, KIND, EXIT, exitCodeForKind } from './errors.js';
 export { redactSecrets } from './redact.js';

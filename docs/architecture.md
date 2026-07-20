@@ -24,27 +24,28 @@ a v0.2 feature. In v0.1, reliability comes from an **ordered availability fallba
 
 ## Roles → models (config)
 
-Everything is roles mapped to model entries; a model entry declares provider, invocation, and a
+Everything is roles mapped to model entries; a model entry declares provider, model id, and a
 user-assigned trust class. No model IDs live in code. Sensitivity **filters** a role's candidates
 by trust — there are no separate `*_sensitive` roles.
 
+See [`config.example.yaml`](../config.example.yaml) for the full, runnable schema. Minimal shape:
+
 ```yaml
 models:
-  opus:  { provider: anthropic, id: <id>, invoke: cli,  trust: trusted }
-  sol:   { provider: openai,    id: <id>, invoke: codex, trust: untrusted }
-  glm:   { provider: ollama,    id: <id>, invoke: http,  trust: untrusted }
-  local: { provider: ollama,    id: <id>, invoke: http,  trust: local }
+  claude:  { provider: anthropic-cli, id: claude-claude-4-8, trust: trusted }
+  gpt:   { provider: openai,        id: gpt-4o,          trust: untrusted }
+  local: { provider: ollama,        id: gemma3:27b,      trust: local }
 
 roles:
-  advisor: [opus, sol]   # ordered: fallback chain (first reachable wins)
-  curator: glm           # optional; omit to use the deterministic template builder
+  advisor: [claude, gpt]   # ordered: fallback chain (first reachable wins)
+  # curator: local       # optional; omit to use the deterministic template builder
 
 policy:
   default_sensitive: false      # sensitive => only trust: trusted|local advisors are eligible
-  max_consults_per_task: 3      # library mode (needs --task-id in CLI mode)
 ```
 
 `trust: local | trusted | untrusted` is user-assigned and provider-neutral. Sensitive ⇒ `local`+`trusted` only.
+Valid `provider` values: `anthropic-cli`, `anthropic-api`, `openai`, `openai-compatible`, `ollama`, `codex-cli`.
 
 ## Provider adapters (v0.1 ships four)
 
@@ -77,14 +78,11 @@ trade-off (open egress = a compromised worker can exfiltrate).
 
 ## StructuredRecommendation (stable, versioned)
 
-Problem Assessment · Verified Facts · Assumptions/Uncertainties · Recommended Approach · Why ·
-Implementation Guidance · Alternatives · Risks · Validation Plan · Confidence (0–100) ·
-Provenance (models used, curated y/n, **token counts / cost where the API reports usage**).
+Carries `schemaVersion: 1` plus: Problem Assessment · Verified Facts · Assumptions/Uncertainties ·
+Recommended Approach · Why · Implementation Guidance · Alternatives · Risks · Validation Plan ·
+Confidence (0–100) · Provenance (models used, curated y/n, **token counts / cost where the API
+reports usage**).
 
 ## Not this
 No agent runtime, router, workflow engine, or model gateway. No telemetry. No persistent state
 beyond an optional consult log (never secrets, never full prompts by default).
-
----
-Full internal spec (source of truth): Obsidian vault
-`02 Projects/Advisory Channel/specs/2026-07-16-oss-advisory-channel.md`.

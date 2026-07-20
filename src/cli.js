@@ -1,21 +1,22 @@
 // CLI logic, factored out of bin/askup.js so it is unit-testable with injected config/deps/streams.
-// Commands: consult | init | doctor | config. The question and context arrive via STDIN, never argv
-// (§18/A6). Exit codes are the machine-readable failure semantics from errors.js.
+// Commands: consult | init | doctor | config. The question and context arrive via STDIN, never
+// argv (argv leaks to `ps`). Exit codes are the machine-readable failure semantics from errors.js.
 
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { consult } from './consult.js';
-import { loadConfig, discoverConfigPath, resolveAdvisorChain, resolveCurator } from './config.js';
+import { loadConfig, discoverConfigPath, resolveAdvisorChain, resolveCurator, TRUST_VALUES } from './config.js';
 import { AskupError, KIND, EXIT } from './errors.js';
 import { defaultRuntime } from './run.js';
 
 const USAGE = `askup — an advisory channel for delegated AI workers
 
 Usage:
-  askup consult [--sensitive] [--curate] [--no-curate] [--json] [--task-id ID] [--config PATH]
+  askup consult [--sensitive] [--curate|--no-curate] [--json] [--task-id ID]
+                [--source-path PATH] [--config PATH]
                 (reads the question + context from STDIN — see below)
-  askup init [--print] [--force] [--config PATH]
+  askup init [--interactive] [--print] [--force] [--sandbox] [--config PATH]
   askup doctor [--config PATH]
   askup config [--config PATH]
 
@@ -42,6 +43,7 @@ export function parseArgs(argv) {
     else if (a === '--print') flags.print = true;
     else if (a === '--force') flags.force = true;
     else if (a === '--sandbox') flags.sandbox = true;
+    else if (a === '--interactive' || a === '-i') flags.interactive = true;
     else if (a === '--task-id') flags.taskId = rest[++i];
     else if (a === '--source-path') flags.sourcePath = rest[++i];
     else if (a === '--config') flags.config = rest[++i];
@@ -130,7 +132,9 @@ export async function runConsult({ stdin, flags, config, deps = defaultRuntime, 
   let state = null;
   let statePath = null;
   if (flags.taskId) {
-    statePath = path.join(process.env.TMPDIR || '/tmp', `askup-state-${sanitize(flags.taskId)}.json`);
+    // os.tmpdir() honors TMPDIR/TEMP/TMP per platform; the old `TMPDIR || '/tmp'` wrote to a
+    // literal `\tmp` on Windows, where TMPDIR is not set.
+    statePath = path.join(os.tmpdir(), `askup-state-${sanitize(flags.taskId)}.json`);
     state = readState(statePath);
   }
 
@@ -186,16 +190,23 @@ export async function runDoctor({ flags, config, out, err, probe = defaultProbe 
   out('models:');
   const statusByName = {};
   let sawEgressBlock = false;
+  let sawMissingModel = false;
   for (const [name, m] of Object.entries(cfg.models)) {
     const s = await probe(m);
     statusByName[name] = s;
     if (s.status === 'egress-blocked') sawEgressBlock = true;
+    if (s.status === 'model-missing') sawMissingModel = true;
     out(`  ${name.padEnd(10)} ${m.provider.padEnd(18)} ${m.id.padEnd(22)} trust=${m.trust.padEnd(9)} ${String(s.status).padEnd(14)} ${s.detail || ''}`);
   }
   if (sawEgressBlock) {
     out('');
     out('  (!) egress-blocked: a host was unreachable. If you are inside a sandbox, network egress may');
     out('      be off — prefer the HTTP adapters and see docs/sandboxed-callers.md.');
+  }
+  if (sawMissingModel) {
+    out('');
+    out('  (!) model-missing: the host is up but that model is not pulled. Run the `ollama pull`');
+    out('      shown above, or point the config at a tag you already have (`ollama list`).');
   }
   out('');
   out('resolved roles:');
@@ -213,6 +224,77 @@ export async function runDoctor({ flags, config, out, err, probe = defaultProbe 
     out('  (!) no usable advisor in the normal chain — fix auth/egress above before consulting.');
     return EXIT.PROVIDER_ERROR;
   }
+  return EXIT.OK;
+}
+
+// The interactive wizard writes the SAME YAML schema `init` already produces — it just fills the
+// values in instead of leaving a template to hand-edit. Deliberately a terminal flow, not a local
+// web UI: askup's primary caller is an automated worker running headless, in a sandbox, over SSH or
+// in CI, where a browser wizard is unreachable — and standing up an HTTP listener that renders API
+// keys would add a real attack surface (DNS rebinding / CSRF against localhost) to a tool whose
+// whole job is handling secrets carefully. See docs/architecture.md.
+export async function runInitInteractive({ flags, out, err, detect = defaultDetect, ask, cwd = process.cwd(), writeFile = fs.writeFileSync, exists = fs.existsSync, mkdir = fs.mkdirSync }) {
+  const detected = detect();
+  out('askup init — interactive. Enter to accept the [default]; Ctrl-C to abort.');
+  out(`detected on PATH: ${Object.entries(detected).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}`);
+  out('');
+
+  const models = [];
+  const advisor = [];
+
+  const addModel = async (key, label, provider, defaultId, trust, hint) => {
+    const yes = await ask(`Configure ${label}? [Y/n] `);
+    if (/^n/i.test(yes.trim())) return;
+    const id = (await ask(`  model id for ${label} [${defaultId}]: `)).trim() || defaultId;
+    const t = (await ask(`  trust for ${label} — local|trusted|untrusted [${trust}]: `)).trim() || trust;
+    if (!TRUST_VALUES.includes(t)) {
+      err(`  '${t}' is not a valid trust value; using '${trust}'.`);
+    }
+    const useTrust = TRUST_VALUES.includes(t) ? t : trust;
+    models.push(`  ${key}: { provider: ${provider}, id: ${id}, trust: ${useTrust} }${hint ? `  # ${hint}` : ''}`);
+    advisor.push(key);
+  };
+
+  if (detected.claude) await addModel('claude', 'Claude Code CLI', 'anthropic-cli', 'claude-opus-4-8', 'trusted', 'uses the CLI login');
+  if (detected.codex) await addModel('codex', 'Codex CLI', 'codex-cli', 'gpt-5-codex', 'untrusted', 'read-capable agent, NOT no-tools');
+  if (detected.ollama) await addModel('local', 'Ollama (local)', 'ollama', 'llama3.1:8b', 'local', 'localhost, no key');
+  if (!models.length) {
+    out('Nothing detected — adding an Ollama entry you can edit.');
+    models.push('  local: { provider: ollama, id: llama3.1:8b, trust: local }');
+    advisor.push('local');
+  }
+
+  const curator = (await ask(`Curator model (compresses context before the advisor) — a model key, or blank for none [none]: `)).trim();
+  const sens = await ask('Treat every request as sensitive by default (third-party advisors refused)? [y/N] ');
+
+  const content = [
+    '# askup config. Secrets are NEVER stored here — models reference env vars only.',
+    '# `askup doctor` verifies each model is reachable and (for Ollama) actually pulled.',
+    '# trust: local | trusted | untrusted (sensitive => trusted/local only).',
+    'models:',
+    ...models,
+    'roles:',
+    `  advisor: [${advisor.join(', ')}]   # ordered fallback chain — first reachable wins`,
+    curator && advisor.includes(curator) ? `  curator: ${curator}` : '  # curator: <model key>   # optional; omit to use the deterministic template builder',
+    'policy:',
+    `  default_sensitive: ${/^y/i.test(sens.trim()) ? 'true' : 'false'}`,
+    '',
+  ].join('\n');
+
+  if (curator && !advisor.includes(curator)) {
+    err(`note: '${curator}' is not one of the models you configured — leaving the curator commented out.`);
+  }
+
+  const target = flags.config ?? path.join(cwd, 'askup.yaml');
+  if (exists(target) && !flags.force) {
+    err(`askup init: ${target} already exists. Use --force to overwrite.`);
+    return EXIT.USAGE;
+  }
+  mkdir(path.dirname(target), { recursive: true });
+  writeFile(target, content, 'utf8');
+  out('');
+  out(`wrote ${target}`);
+  out('next: `askup doctor` to verify, then pipe a question into `askup consult`.');
   return EXIT.OK;
 }
 
@@ -253,25 +335,28 @@ export function generateStarterConfig(detected, { sandbox = false } = {}) {
   const models = [];
   const advisor = [];
   if (detected.claude) {
-    models.push('  opus:  { provider: anthropic-cli, id: claude-opus-4-8, trust: trusted }   # subscription token or ANTHROPIC_API_KEY');
-    advisor.push('opus');
+    models.push('  claude: { provider: anthropic-cli, id: claude-opus-4-8, trust: trusted }   # uses the Claude Code login, or ANTHROPIC_API_KEY');
+    advisor.push('claude');
   }
   if (detected.codex) {
-    models.push('  sol:   { provider: codex-cli,     id: gpt-5.6-sol,     trust: untrusted } # ChatGPT sub — read-capable agent, NOT no-tools (see docs/threat-model.md)');
-    advisor.push('sol');
+    models.push('  codex:  { provider: codex-cli,     id: gpt-5-codex,      trust: untrusted } # read-capable agent, NOT a no-tools advisor (docs/threat-model.md)');
+    advisor.push('codex');
   }
   if (detected.ollama) {
-    models.push('  local: { provider: ollama,        id: gemma3:27b,      trust: local }     # localhost, no key');
+    models.push('  local:  { provider: ollama,        id: llama3.1:8b,      trust: local }     # localhost, no key');
     if (advisor.length === 0) advisor.push('local');
   }
   if (models.length === 0) {
     // Nothing detected — emit a commented template the user can fill in.
-    models.push('  local: { provider: ollama,        id: gemma3:27b,      trust: local }     # start Ollama, or edit this');
+    models.push('  local:  { provider: ollama,        id: llama3.1:8b,      trust: local }     # start Ollama, or edit this');
     advisor.push('local');
   }
   return [
     '# askup config. Secrets are NEVER stored here — models reference env vars only.',
-    '# Full reference: docs/ · trust: local | trusted | untrusted (sensitive => trusted/local only).',
+    '# Model ids below are EXAMPLES — change them to models you actually have.',
+    '# `askup doctor` tells you which are reachable and (for Ollama) actually pulled.',
+    '# Reference: https://github.com/Pher217/askup#docs',
+    '# trust: local | trusted | untrusted (sensitive => trusted/local only).',
     'models:',
     ...models,
     'roles:',
@@ -315,15 +400,14 @@ function emitError(e, flags, err) {
   return 1;
 }
 
-// Classify a model's readiness WITHOUT sending its credential (Fable C2). Status is one of:
+// Classify a model's readiness WITHOUT sending its credential. Status is one of:
 // ok | not-authed | egress-blocked | dns-fail | not-on-path | unknown. HTTP reachability is checked
 // with an UNauthenticated request (any HTTP response = egress works); auth is checked by LOCAL
 // PRESENCE only (env set, or credential file exists) — never by sending the key.
 async function defaultProbe(model) {
   if (model.provider === 'ollama') {
     const base = (model.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
-    const reach = await httpReachable(`${base}/api/tags`);
-    return reach.reachable ? { status: 'ok', detail: '' } : { status: reach.status, detail: reach.detail };
+    return ollamaStatus(base, model.id);
   }
   if (model.provider === 'openai' || model.provider === 'openai-compatible') {
     return httpAuthedStatus(model, model.baseUrl || 'https://api.openai.com', model.apiKeyEnv || 'OPENAI_API_KEY', '/v1/models');
@@ -334,6 +418,37 @@ async function defaultProbe(model) {
   if (model.provider === 'anthropic-cli') return cliStatus('claude', model, model.tokenEnv || 'CLAUDE_CODE_OAUTH_TOKEN');
   if (model.provider === 'codex-cli') return cliStatus('codex', model, null);
   return { status: 'unknown', detail: 'unknown provider' };
+}
+
+// Ollama is the one provider that will TELL us whether the model is actually available, so ask.
+// Reporting "ok" purely because the host answered is a false green: `init` scaffolds a model id, the
+// user runs `doctor`, sees all-clear, and only then discovers at consult time that the tag was never
+// pulled. `/api/tags` returns the installed list in the same request that proves reachability, so
+// checking it costs nothing.
+//
+// Cloud tags (`model:cloud`) are served by Ollama's hosted side and do NOT appear in the local tag
+// list — absence there is not evidence of absence, so those are reported reachable-but-unverified
+// rather than missing.
+async function ollamaStatus(base, id) {
+  let data;
+  try {
+    const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return { status: 'ok', detail: `host reachable (HTTP ${res.status} from /api/tags — model not verified)` };
+    data = await res.json();
+  } catch (e) {
+    const msg = String(e?.message || e);
+    if (/getaddrinfo|ENOTFOUND|EAI_AGAIN|dns/i.test(msg)) return { status: 'dns-fail', detail: 'DNS lookup failed' };
+    return { status: 'egress-blocked', detail: 'unreachable (timeout/refused — is `ollama serve` running?)' };
+  }
+
+  if (/:cloud$/.test(id)) return { status: 'ok', detail: 'host reachable; cloud tag (availability not verifiable locally)' };
+
+  const tags = Array.isArray(data?.models) ? data.models.map((m) => m?.name).filter(Boolean) : [];
+  if (!tags.length) return { status: 'ok', detail: 'host reachable (no tag list returned — model not verified)' };
+  // Ollama reports bare names as `name:latest`; accept either spelling.
+  const wanted = id.includes(':') ? id : `${id}:latest`;
+  if (tags.includes(id) || tags.includes(wanted)) return { status: 'ok', detail: 'host reachable, model pulled' };
+  return { status: 'model-missing', detail: `not pulled — run \`ollama pull ${id}\`` };
 }
 
 // Reachability without credentials. Any HTTP response (even 401) means egress works.
@@ -413,9 +528,12 @@ function readState(p) {
   }
 }
 
+// 0600: the state file records which consults a task has already spent. It lives in a shared temp
+// directory, so a world-readable/writable file lets any local user read a task's history or reset
+// (or exhaust) its consult budget — and that budget is a COST control.
 function writeState(p, state) {
   try {
-    fs.writeFileSync(p, JSON.stringify(state), 'utf8');
+    fs.writeFileSync(p, JSON.stringify(state), { encoding: 'utf8', mode: 0o600 });
   } catch {
     /* best-effort — a missing state file just resets the counter */
   }

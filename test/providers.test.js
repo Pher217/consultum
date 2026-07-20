@@ -19,14 +19,10 @@ function credFile(content) {
 
 const SENTINEL = 'SENTINEL_PROMPT_do_not_leak_to_argv';
 
-function fakeDeps({ noStdin, withStdin, http } = {}) {
-  const calls = { runNoStdin: [], runWithStdin: [], httpPostJson: [] };
+function fakeDeps({ withStdin, http } = {}) {
+  const calls = { runWithStdin: [], httpPostJson: [] };
   return {
     calls,
-    runNoStdin: async (cmd, args, opts) => {
-      calls.runNoStdin.push({ cmd, args, opts });
-      return (noStdin ?? (() => ({ code: 0, stdout: 'advice', stderr: '', timedOut: false })))();
-    },
     runWithStdin: async (cmd, args, opts) => {
       calls.runWithStdin.push({ cmd, args, opts });
       return (withStdin ?? (() => ({ code: 0, stdout: 'advice', stderr: '', timedOut: false })))();
@@ -83,7 +79,7 @@ test('anthropic-cli: a stall (timedOut) fails fast with provider-error', async (
   await assert.rejects(() => p.invoke('q'), (e) => e.kind === 'provider-error' && /timed out/.test(e.message));
 });
 
-test('anthropic-cli: non-zero exit with partial stdout is rejected (Sol finding 7)', async () => {
+test('anthropic-cli: non-zero exit with partial stdout is rejected', async () => {
   const deps = fakeDeps({ withStdin: () => ({ code: 2, stdout: 'partial', stderr: 'fatal', timedOut: false }) });
   const p = createProvider(model({ provider: 'anthropic-cli', id: 'c' }), deps);
   await assert.rejects(() => p.invoke('q'), (e) => e.kind === 'provider-error' && /exited 2/.test(e.message));
@@ -146,7 +142,7 @@ test('codex-cli: empty output, stall, and non-zero exit all error', async () => 
   await assert.rejects(() => empty.invoke('q'), (e) => e.kind === 'provider-error');
   const stall = createProvider(model({ provider: 'codex-cli', id: 'g' }), fakeDeps({ withStdin: () => ({ code: -1, stdout: '', stderr: '', timedOut: true }) }));
   await assert.rejects(() => stall.invoke('q'), (e) => /timed out/.test(e.message));
-  // non-zero exit with partial stdout must NOT be accepted (Sol finding 7)
+  // non-zero exit with partial stdout must NOT be accepted
   const failed = createProvider(model({ provider: 'codex-cli', id: 'g' }), fakeDeps({ withStdin: () => ({ code: 1, stdout: 'partial advice', stderr: 'fatal', timedOut: false }) }));
   await assert.rejects(() => failed.invoke('q'), (e) => e.kind === 'provider-error' && /exited 1/.test(e.message));
 });
@@ -155,7 +151,7 @@ test('codex-cli: empty output, stall, and non-zero exit all error', async () => 
 
 test('ollama: request-shaped (no tools key), returns text + usage', async () => {
   const deps = fakeDeps({ http: () => ({ message: { content: 'advice' }, prompt_eval_count: 12, eval_count: 8 }) });
-  const p = createProvider(model({ provider: 'ollama', id: 'glm', baseUrl: 'http://h:1' }), deps);
+  const p = createProvider(model({ provider: 'ollama', id: 'curatorm', baseUrl: 'http://h:1' }), deps);
   const out = await p.invoke('q');
   assert.equal(out.text, 'advice');
   assert.deepEqual(out.usage, { promptTokens: 12, completionTokens: 8 });

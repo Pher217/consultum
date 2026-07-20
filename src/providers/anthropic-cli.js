@@ -2,7 +2,7 @@
 // token via `claude setup-token` → CLAUDE_CODE_OAUTH_TOKEN), which is why it exists alongside the
 // request-shaped anthropic-api variant.
 //
-// NO-TOOLS BY DEFAULT (§18, threat-model A2): the curated packet is the advisor's entire world.
+// NO-TOOLS BY DEFAULT: the curated packet is the advisor's entire world.
 // "Read-only" is not a safety property — a filesystem-equipped advisor reached through an injectable
 // packet can read local secrets and echo them back. Filesystem tools are opt-in AND directory-scoped
 // (config `tools: { allow: [...], dirs: [...] }`), never on by default.
@@ -21,7 +21,7 @@ export function create(model, deps) {
       const args = ['-p', '--model', model.id, '--permission-mode', 'plan'];
       if (model.tools && model.tools.allow.length > 0) {
         // Opt-in, directory-scoped read-only tools (config restricts the allowlist to Read/Grep/Glob).
-        // CAVEAT (Sol finding 4): --add-dir ADDS directories; it does not remove the process's own
+        // CAVEAT: --add-dir ADDS directories; it does not remove the process's own
         // working directory. Run askup from a directory that holds no secrets when enabling tools —
         // this is a narrow opt-in, not a sandbox. Even Read here can disclose files; it is not a
         // security boundary.
@@ -43,7 +43,7 @@ export function create(model, deps) {
       const input = system ? `${system}\n\n${prompt}` : prompt;
       const res = await deps.runWithStdin('claude', args, { timeoutMs, input, env });
       if (res.timedOut) throw new AskupError(KIND.PROVIDER_ERROR, `claude (${model.id}) timed out after ${timeoutMs}ms`);
-      // Reject a non-zero exit before trusting stdout (Sol finding 7).
+      // Reject a non-zero exit before trusting stdout.
       if (res.code !== 0) {
         throw new AskupError(KIND.PROVIDER_ERROR, `claude (${model.id}) exited ${res.code}: ${redactedTail(res.stderr)}`);
       }

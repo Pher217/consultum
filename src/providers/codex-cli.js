@@ -1,6 +1,6 @@
 // codex-cli — OpenAI models through the ChatGPT-subscription `codex` CLI.
 //
-// IMPORTANT SECURITY CAVEAT (Sol review, finding 1): `codex exec -s read-only` is NOT a no-tools
+// IMPORTANT SECURITY CAVEAT: `codex exec -s read-only` is NOT a no-tools
 // mode. `read-only` sandboxes *writes*; the agent can still autonomously run read commands and read
 // files from its working directory (`.env`, `~/.aws/credentials`, repo secrets). An injected packet
 // can therefore ask it to read a local secret and echo it back. This adapter is a READ-CAPABLE AGENT,
@@ -32,7 +32,7 @@ export function create(model, deps) {
       );
       if (res.timedOut) throw new AskupError(KIND.PROVIDER_ERROR, `codex (${model.id}) timed out after ${timeoutMs}ms`);
       // Reject a non-zero exit BEFORE trusting stdout — a failed process can emit partial output that
-      // would otherwise be accepted instead of falling through to the next advisor (Sol finding 7).
+      // would otherwise be accepted instead of falling through to the next advisor.
       if (res.code !== 0) {
         throw new AskupError(KIND.PROVIDER_ERROR, `codex (${model.id}) exited ${res.code}: ${redactedTail(res.stderr)}`);
       }
