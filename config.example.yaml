@@ -9,5 +9,7 @@ roles:
   # curator: local            # optional; omit to use the deterministic template builder
 policy:
   default_sensitive: false    # sensitive => only trusted/local advisors are eligible
-# NOTE: the `codex-cli` adapter also exists, but `codex exec -s read-only` is a READ-CAPABLE agent,
-# not a no-tools advisor — prefer `openai` above for a request-shaped OpenAI advisor. See docs/threat-model.md.
+# NOTE: `codex-cli` also exists, but `codex exec -s read-only` is a READ-CAPABLE agent, not a no-tools
+# advisor — prefer `openai` for a request-shaped OpenAI advisor. See docs/threat-model.md.
+# Keychain-free auth: add `api_key_file: <path>` (HTTP) or `token_file: <path>` (anthropic-cli) to a
+# model; env var wins over file. Inside a sandbox, see docs/sandboxed-callers.md.

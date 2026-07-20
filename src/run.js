@@ -10,7 +10,7 @@ import fs from 'fs';
 // "Reading additional input from stdin..." and hangs/empties when stdin is a pipe — it needs a real
 // EOF'd stdin to use the arg prompt. On Windows, /dev/null does not exist; we fall back to 'ignore'
 // (see docs/windows.md). Ported verbatim from coding-structure execute-task.
-export function runNoStdin(cmd, args, { cwd, timeoutMs } = {}) {
+export function runNoStdin(cmd, args, { cwd, timeoutMs, env } = {}) {
   return new Promise((resolve) => {
     let devnull;
     try {
@@ -18,7 +18,7 @@ export function runNoStdin(cmd, args, { cwd, timeoutMs } = {}) {
     } catch {
       devnull = 'ignore';
     }
-    const child = spawn(cmd, args, { cwd, stdio: [devnull, 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, { cwd, stdio: [devnull, 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : undefined });
     let out = '';
     let err = '';
     let timedOut = false;
@@ -45,9 +45,9 @@ export function runNoStdin(cmd, args, { cwd, timeoutMs } = {}) {
 
 // Run a command feeding `input` on stdin (so the prompt never touches argv — argv leaks to `ps` and
 // shell history; §18/threat-model A6). Used by anthropic-cli: `claude -p` reads the prompt from stdin.
-export function runWithStdin(cmd, args, { cwd, timeoutMs, input = '' } = {}) {
+export function runWithStdin(cmd, args, { cwd, timeoutMs, input = '', env } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : undefined });
     let out = '';
     let err = '';
     let timedOut = false;

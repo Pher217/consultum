@@ -25,6 +25,9 @@ export async function adviseWithChain(chain, { prompt, system, timeoutMs, deps, 
     try {
       first = await provider.invoke(prompt, { system, timeoutMs });
     } catch (err) {
+      // A credential/config error (USAGE) is the user's to fix — fail loud, do not silently try the
+      // next advisor with (e.g.) a bad-perms token file.
+      if (err instanceof AskupError && err.kind === KIND.USAGE) throw err;
       providerErrors.push(`${model.name}: ${err.message}`);
       continue; // provider down/stalled/empty → next advisor
     }
@@ -40,6 +43,7 @@ export async function adviseWithChain(chain, { prompt, system, timeoutMs, deps, 
         const rec = parse(second.text);
         return { model, rec, text: second.text, usage: second.usage };
       } catch (err2) {
+        if (err2 instanceof AskupError && err2.kind === KIND.USAGE) throw err2; // config/credential error — fail loud (mirror the first-invoke path)
         if (err2.kind === KIND.MALFORMED_OUTPUT) {
           malformedErrors.push(`${model.name}: ${err2.message}`);
           continue; // still malformed after retry → next advisor

@@ -102,9 +102,14 @@ function normalizeConfig(raw, filename) {
       trust: spec.trust,
       baseUrl: spec.base_url ?? spec.baseUrl ?? null,
       apiKeyEnv: spec.api_key_env ?? spec.apiKeyEnv ?? null,
+      apiKeyFile: spec.api_key_file ?? spec.apiKeyFile ?? null, // HTTP: file-based key (keychain-free)
+      tokenEnv: spec.token_env ?? spec.tokenEnv ?? null, // CLI: env var to inject/read the token from
+      tokenFile: spec.token_file ?? spec.tokenFile ?? null, // CLI: file holding the token
       timeoutMs: spec.timeout_ms ?? spec.timeoutMs ?? null,
       // anthropic-cli only: opt-in, directory-scoped tools. Absent => no tools (the safe default).
       tools: normalizeTools(spec.tools, name, filename),
+      // directory of the config file — credential file paths resolve relative to it (stamped by loadConfig)
+      configDir: null,
     };
   }
 
@@ -245,6 +250,8 @@ export function loadConfig({ cwd, env = process.env, home, configPath } = {}) {
   const config = parseConfig(text, resolved);
   applyEnvOverrides(config, env);
   config.path = resolved;
+  config.dir = path.dirname(resolved);
+  for (const m of Object.values(config.models)) m.configDir = config.dir; // credential paths resolve here
   return config;
 }
 

@@ -24,6 +24,16 @@ concurrent consults through a CLI adapter, you spawn many processes — bound yo
 HTTP adapters (`ollama`, `openai*`, `anthropic-api`) have no per-call process cost and scale better
 for parallel use.
 
+## Credential-file permission checks
+
+File-based credentials (`token_file` / `api_key_file`) are perm-checked on POSIX — a group/world-
+accessible file is refused (`chmod 600`). **On Windows this check is skipped**, because Node's
+`fs.stat().mode` does not carry meaningful POSIX permission bits there. The single-line and size-cap
+gates still apply. Protect credential files with NTFS ACLs, and keep them outside any repo (they are
+gitignored by pattern). The `ASKUP_ALLOW_INSECURE_CREDENTIAL_PERMS=1` escape hatch is a no-op on
+Windows (the check is already skipped). Env injection into a subprocess (`token_file`) works
+identically on Windows.
+
 ## Recommendation
 
 On Windows, prefer the HTTP adapters (`anthropic-api`, `openai`, `ollama`) for the advisor role. Use

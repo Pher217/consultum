@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { consult } from '../src/consult.js';
 import { parseConfig } from '../src/config.js';
 
@@ -204,6 +207,26 @@ policy:
     () => consult({ question: 'q', context: 'c', sourcePath: 'app/secrets/key.txt', config: cfg, deps: deps() }),
     (e) => e.kind === 'refused-by-policy',
   );
+});
+
+test('a credential/config (USAGE) error fails loud — it does NOT silently fall through to the next advisor', async () => {
+  // adv (openai) has an api_key_file that violates the shape gate (multi-line) -> USAGE from resolveCredential.
+  // The chain must abort with USAGE, not try `local` next (Fable finding: fail loud on USAGE, both paths).
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'askup-ct-'));
+  const badKey = path.join(dir, 'k');
+  fs.writeFileSync(badKey, 'line1\nline2\n');
+  if (process.platform !== 'win32') fs.chmodSync(badKey, 0o600);
+  const cfg = parseConfig(`
+models:
+  adv:   { provider: openai, id: gpt, trust: trusted, api_key_env: ASKUP_UNSET_KEY_X, api_key_file: ${badKey} }
+  local: { provider: ollama, id: adv-model, trust: trusted }
+roles:
+  advisor: [adv, local]
+`);
+  let localTried = false;
+  const d = deps({ httpPostJson: async () => { localTried = true; return { message: { content: REC } }; } });
+  await assert.rejects(() => consult({ question: 'q', config: cfg, deps: d }), (e) => e.kind === 'usage' && /multiple lines/.test(e.message));
+  assert.equal(localTried, false, 'must not fall through to the next advisor on a credential error');
 });
 
 test('consult requires a question', async () => {

@@ -15,6 +15,7 @@
 // check` lets it run outside a trusted git dir.
 
 import { AskupError, KIND } from '../errors.js';
+import { redactedTail } from '../redact.js';
 
 const DEFAULT_TIMEOUT_MS = 240_000;
 
@@ -33,7 +34,7 @@ export function create(model, deps) {
       // Reject a non-zero exit BEFORE trusting stdout — a failed process can emit partial output that
       // would otherwise be accepted instead of falling through to the next advisor (Sol finding 7).
       if (res.code !== 0) {
-        throw new AskupError(KIND.PROVIDER_ERROR, `codex (${model.id}) exited ${res.code}: ${(res.stderr || '').trim().slice(-200)}`);
+        throw new AskupError(KIND.PROVIDER_ERROR, `codex (${model.id}) exited ${res.code}: ${redactedTail(res.stderr)}`);
       }
       const text = (res.stdout || '').trim();
       if (!text) throw new AskupError(KIND.PROVIDER_ERROR, `codex (${model.id}) returned no output`);

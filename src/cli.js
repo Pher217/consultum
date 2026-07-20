@@ -3,6 +3,7 @@
 // (§18/A6). Exit codes are the machine-readable failure semantics from errors.js.
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { consult } from './consult.js';
 import { loadConfig, discoverConfigPath, resolveAdvisorChain, resolveCurator } from './config.js';
@@ -40,6 +41,7 @@ export function parseArgs(argv) {
     else if (a === '--json') flags.json = true;
     else if (a === '--print') flags.print = true;
     else if (a === '--force') flags.force = true;
+    else if (a === '--sandbox') flags.sandbox = true;
     else if (a === '--task-id') flags.taskId = rest[++i];
     else if (a === '--source-path') flags.sourcePath = rest[++i];
     else if (a === '--config') flags.config = rest[++i];
@@ -181,39 +183,72 @@ export async function runDoctor({ flags, config, out, err, probe = defaultProbe 
   out(`askup doctor — config: ${cfg.path ?? '(injected)'}`);
   out('');
   out('models:');
+  const statusByName = {};
+  let sawEgressBlock = false;
   for (const [name, m] of Object.entries(cfg.models)) {
-    const status = await probe(m);
-    out(`  ${name.padEnd(10)} ${m.provider.padEnd(18)} ${m.id.padEnd(22)} trust=${m.trust.padEnd(9)} ${status.reachable ? 'OK' : 'unreachable'}  ${status.detail}`);
+    const s = await probe(m);
+    statusByName[name] = s;
+    if (s.status === 'egress-blocked') sawEgressBlock = true;
+    out(`  ${name.padEnd(10)} ${m.provider.padEnd(18)} ${m.id.padEnd(22)} trust=${m.trust.padEnd(9)} ${String(s.status).padEnd(14)} ${s.detail || ''}`);
+  }
+  if (sawEgressBlock) {
+    out('');
+    out('  (!) egress-blocked: a host was unreachable. If you are inside a sandbox, network egress may');
+    out('      be off — prefer the HTTP adapters and see docs/sandboxed-callers.md.');
   }
   out('');
   out('resolved roles:');
-  out(`  advisor (normal):    ${resolveAdvisorChain(cfg, { sensitive: false }).map((m) => m.name).join(' -> ') || '(none)'}`);
+  const normalChain = resolveAdvisorChain(cfg, { sensitive: false });
+  out(`  advisor (normal):    ${normalChain.map((m) => m.name).join(' -> ') || '(none)'}`);
   out(`  advisor (sensitive): ${resolveAdvisorChain(cfg, { sensitive: true }).map((m) => m.name).join(' -> ') || '(none — sensitive requests will be REFUSED)'}`);
   const curN = resolveCurator(cfg, { sensitive: false });
   out(`  curator:             ${curN ? curN.name : '(none — deterministic template builder)'}`);
+
+  // Exit non-zero when no advisor in the normal chain is usable (reachable + locally authed), so a
+  // wrapper/CI can detect a broken setup. This is distinct from a sensitive-policy refusal.
+  const usable = normalChain.some((m) => statusByName[m.name]?.status === 'ok');
+  if (!usable) {
+    out('');
+    out('  (!) no usable advisor in the normal chain — fix auth/egress above before consulting.');
+    return EXIT.PROVIDER_ERROR;
+  }
   return EXIT.OK;
 }
 
-export function runInit({ flags, out, err, detect = defaultDetect, cwd = process.cwd(), writeFile = fs.writeFileSync, exists = fs.existsSync }) {
+export function runInit({ flags, out, err, detect = defaultDetect, cwd = process.cwd(), writeFile = fs.writeFileSync, exists = fs.existsSync, mkdir = fs.mkdirSync }) {
   const detected = detect();
-  const content = generateStarterConfig(detected);
+  const content = generateStarterConfig(detected, { sandbox: Boolean(flags.sandbox) });
   if (flags.print) {
     out(content);
     return EXIT.OK;
   }
-  const target = flags.config ?? path.join(cwd, 'askup.yaml');
+  // The sandbox preset must NOT default into the worker-writable cwd (threat-model A7). Default it to
+  // the user config dir instead; a non-sandbox init still uses ./askup.yaml.
+  const defaultTarget = flags.sandbox
+    ? path.join(xdgConfigHome(), 'askup', 'config.yaml')
+    : path.join(cwd, 'askup.yaml');
+  const target = flags.config ?? defaultTarget;
   if (exists(target) && !flags.force) {
     err(`askup init: ${target} already exists. Use --force to overwrite, or --print to preview.`);
     return EXIT.USAGE;
   }
+  mkdir(path.dirname(target), { recursive: true }); // create ~/.config/askup etc. so the write succeeds
   writeFile(target, content, 'utf8');
   out(`wrote ${target}`);
-  out(`detected providers: ${Object.entries(detected).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}`);
+  if (flags.sandbox) {
+    out('sandbox preset: HTTP adapters only (no keychain, no bundled CLI). Set OPENAI_API_KEY /');
+    out('ANTHROPIC_API_KEY (or api_key_file), and allowlist egress to api.openai.com / api.anthropic.com.');
+    out('IMPORTANT: keep this config OUTSIDE any worker-writable dir — set ASKUP_CONFIG to a path a');
+    out('worker cannot write (threat-model A7). See docs/sandboxed-callers.md.');
+  } else {
+    out(`detected providers: ${Object.entries(detected).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}`);
+  }
   out('next: `askup doctor` to verify, then pipe a question into `askup consult`.');
   return EXIT.OK;
 }
 
-export function generateStarterConfig(detected) {
+export function generateStarterConfig(detected, { sandbox = false } = {}) {
+  if (sandbox) return sandboxStarterConfig();
   const models = [];
   const advisor = [];
   if (detected.claude) {
@@ -247,6 +282,25 @@ export function generateStarterConfig(detected) {
   ].join('\n');
 }
 
+// For a caller inside a restricted sandbox: HTTP adapters only — they need just an env/file key and
+// one allowlisted host, never the OS keychain or a bundled CLI (docs/sandboxed-callers.md).
+function sandboxStarterConfig() {
+  return [
+    '# askup — sandbox preset. HTTP adapters only (keychain-free, one host each).',
+    '# Keys come from env vars (or api_key_file). Keep THIS FILE outside any worker-writable dir',
+    '# and point ASKUP_CONFIG at it (threat-model A7). trust: local | trusted | untrusted.',
+    'models:',
+    '  claude: { provider: anthropic-api, id: claude-opus-4-8, trust: trusted,   api_key_env: ANTHROPIC_API_KEY }  # api.anthropic.com',
+    '  gpt:    { provider: openai,        id: gpt-4o,          trust: untrusted, api_key_env: OPENAI_API_KEY }      # api.openai.com',
+    '  # local: { provider: ollama, id: gemma3:27b, trust: local }   # only if localhost egress is allowed',
+    'roles:',
+    '  advisor: [claude, gpt]        # request-shaped advisors (no tools, no keychain)',
+    'policy:',
+    '  default_sensitive: false',
+    '',
+  ].join('\n');
+}
+
 // ---- helpers ---------------------------------------------------------------
 
 function emitError(e, flags, err) {
@@ -260,50 +314,89 @@ function emitError(e, flags, err) {
   return 1;
 }
 
+// Classify a model's readiness WITHOUT sending its credential (Fable C2). Status is one of:
+// ok | not-authed | egress-blocked | dns-fail | not-on-path | unknown. HTTP reachability is checked
+// with an UNauthenticated request (any HTTP response = egress works); auth is checked by LOCAL
+// PRESENCE only (env set, or credential file exists) — never by sending the key.
 async function defaultProbe(model) {
-  // Best-effort reachability check — no model call, no tokens spent.
-  try {
-    if (model.provider === 'ollama') {
-      const base = (model.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
-      const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(1500) });
-      return { reachable: res.ok, detail: res.ok ? '' : `HTTP ${res.status}` };
-    }
-    if (model.provider === 'anthropic-cli') return probeOnPath('claude');
-    if (model.provider === 'codex-cli') return probeOnPath('codex');
-    if (model.provider === 'openai' || model.provider === 'openai-compatible') {
-      const env = model.apiKeyEnv || 'OPENAI_API_KEY';
-      return { reachable: Boolean(process.env[env]), detail: process.env[env] ? '' : `${env} not set` };
-    }
-    if (model.provider === 'anthropic-api') {
-      const env = model.apiKeyEnv || 'ANTHROPIC_API_KEY';
-      return { reachable: Boolean(process.env[env]), detail: process.env[env] ? '' : `${env} not set` };
-    }
-  } catch (e) {
-    return { reachable: false, detail: e.message };
+  if (model.provider === 'ollama') {
+    const base = (model.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
+    const reach = await httpReachable(`${base}/api/tags`);
+    return reach.reachable ? { status: 'ok', detail: '' } : { status: reach.status, detail: reach.detail };
   }
-  return { reachable: false, detail: 'unknown provider' };
+  if (model.provider === 'openai' || model.provider === 'openai-compatible') {
+    return httpAuthedStatus(model, model.baseUrl || 'https://api.openai.com', model.apiKeyEnv || 'OPENAI_API_KEY', '/v1/models');
+  }
+  if (model.provider === 'anthropic-api') {
+    return httpAuthedStatus(model, model.baseUrl || 'https://api.anthropic.com', model.apiKeyEnv || 'ANTHROPIC_API_KEY', '/v1/models');
+  }
+  if (model.provider === 'anthropic-cli') return cliStatus('claude', model, model.tokenEnv || 'CLAUDE_CODE_OAUTH_TOKEN');
+  if (model.provider === 'codex-cli') return cliStatus('codex', model, null);
+  return { status: 'unknown', detail: 'unknown provider' };
 }
 
-function probeOnPath(cmd) {
+// Reachability without credentials. Any HTTP response (even 401) means egress works.
+async function httpReachable(url) {
+  try {
+    await fetch(url, { signal: AbortSignal.timeout(2000) });
+    return { reachable: true };
+  } catch (e) {
+    const msg = String(e?.message || e);
+    if (/getaddrinfo|ENOTFOUND|EAI_AGAIN|dns/i.test(msg)) return { reachable: false, status: 'dns-fail', detail: 'DNS lookup failed' };
+    // timeout / connection refused / network unreachable — the classic sandbox-egress-off signature
+    return { reachable: false, status: 'egress-blocked', detail: 'unreachable (timeout/refused — egress off?)' };
+  }
+}
+
+function credentialPresent(model, envName) {
+  if (envName && process.env[envName]) return true;
+  if (model.apiKeyFile || model.tokenFile) {
+    const f = model.apiKeyFile || model.tokenFile;
+    const abs = path.isAbsolute(f) ? f : path.resolve(model.configDir || process.cwd(), f);
+    try { return fs.statSync(abs).isFile(); } catch { return false; }
+  }
+  return false;
+}
+
+async function httpAuthedStatus(model, base, envName, reachPath) {
+  const reach = await httpReachable(base.replace(/\/$/, '') + reachPath);
+  if (!reach.reachable) return { status: reach.status, detail: reach.detail };
+  if (!credentialPresent(model, envName)) return { status: 'not-authed', detail: `${envName} not set and no api_key_file` };
+  return { status: 'ok', detail: 'reachable, credential present (not sent)' };
+}
+
+// CLI adapters: on PATH? credential locally present? We cannot verify auth without running it, so a
+// binary on PATH is reported 'ok' (auth may come from the tool's own login/keychain).
+function cliStatus(cmd, model, tokenEnv) {
+  if (!onPath(cmd)) return { status: 'not-on-path', detail: `${cmd} not on PATH` };
+  const cred = tokenEnv && (process.env[tokenEnv] || credentialPresent(model, tokenEnv));
+  return { status: 'ok', detail: cred ? 'on PATH, token present' : "on PATH (auth via the tool's own login if no token_file)" };
+}
+
+function xdgConfigHome() {
+  return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+}
+
+function onPath(cmd) {
   const dirs = (process.env.PATH || '').split(path.delimiter);
   const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
   for (const d of dirs) {
     for (const ext of exts) {
       try {
-        if (fs.statSync(path.join(d, cmd + ext)).isFile()) return { reachable: true, detail: '' };
+        if (fs.statSync(path.join(d, cmd + ext)).isFile()) return true;
       } catch {
         /* keep looking */
       }
     }
   }
-  return { reachable: false, detail: `${cmd} not on PATH` };
+  return false;
 }
 
 function defaultDetect() {
   return {
-    claude: probeOnPath('claude').reachable,
-    codex: probeOnPath('codex').reachable,
-    ollama: probeOnPath('ollama').reachable,
+    claude: onPath('claude'),
+    codex: onPath('codex'),
+    ollama: onPath('ollama'),
   };
 }
 
