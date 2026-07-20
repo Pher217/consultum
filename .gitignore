@@ -10,8 +10,8 @@ dist/
 askup.local.yaml
 /askup.yaml
 coverage/
-# Claude Code worktrees (parallel session isolation)
-.claude/worktrees/
+# Local agent/editor scratch — never publish internal planning artifacts
+.claude/
 
-# graphify build output — canonical home is ~/dev/Graphify/{Project}/{repo}/
+# local code-graph build output
 graphify-out/

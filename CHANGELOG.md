@@ -24,7 +24,23 @@ worker gets stuck, it escalates a curated, secret-redacted problem to a stronger
   dns-fail | not-on-path`, hints at a blocked sandbox, exits non-zero when no advisor is usable.
 - `askup init --sandbox` — HTTP-only preset for callers inside a restricted sandbox, plus
   `docs/sandboxed-callers.md`.
+- **Escalation panel** — `--panel` (or automatically on a low-confidence answer) asks every model
+  in `roles.panel` the same question concurrently and returns each view. An optional `reconciler`
+  synthesizes them and is instructed to name material dissent; without one, `agreement` stays
+  `unassessed` — askup does not guess whether two prose answers agree. Panel size is capped, and a
+  panel whose members all fail is reported as not convened rather than as an empty consensus.
+- `askup init --interactive` — a terminal wizard that fills in the config instead of leaving a
+  template to hand-edit. Terminal, not a localhost web UI: askup's primary caller runs headless,
+  in a sandbox or in CI.
+- `StructuredRecommendation` carries `schemaVersion`, and `provenance.curationNote` reports when
+  curation was requested but skipped or failed.
+- Published TypeScript declarations (`types/index.d.ts`).
 - Machine-readable exit codes, token/cost provenance, Windows support matrix.
+
+### Limits
+- Input is capped at 1 MB (stdin) and subprocess output at 4 MB; a panel is capped at 5 members.
+  askup spends real money on hosted providers, so unbounded input and unbounded fan-out are both
+  treated as cost/DoS surface, not just robustness.
 
 ### Security
 - Advisor invoked **no-tools / request-shaped by default**; filesystem tools opt-in and

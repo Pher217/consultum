@@ -4,53 +4,35 @@
 // tests can run without any live provider (see test/providers.test.js).
 
 import { spawn } from 'child_process';
-import fs from 'fs';
 
-// Run a command with stdin bound to a REAL /dev/null (NOT an empty pipe). Codex `exec` prints
-// "Reading additional input from stdin..." and hangs/empties when stdin is a pipe — it needs a real
-// EOF'd stdin to use the arg prompt. On Windows, /dev/null does not exist; we fall back to 'ignore'
-// (see docs/windows.md). Ported verbatim from coding-structure execute-task.
-export function runNoStdin(cmd, args, { cwd, timeoutMs, env } = {}) {
-  return new Promise((resolve) => {
-    let devnull;
-    try {
-      devnull = fs.openSync(process.platform === 'win32' ? 'NUL' : '/dev/null', 'r');
-    } catch {
-      devnull = 'ignore';
-    }
-    const child = spawn(cmd, args, { cwd, stdio: [devnull, 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : undefined });
-    let out = '';
-    let err = '';
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already gone */
-      }
-    }, timeoutMs);
-    child.stdout.on('data', (d) => (out += d));
-    child.stderr.on('data', (d) => (err += d));
-    child.on('error', (e) => {
-      clearTimeout(timer);
-      resolve({ code: -1, stdout: out, stderr: String(e), timedOut });
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout: out, stderr: err, timedOut });
-    });
-  });
+// Cap on how much a subprocess may emit. A provider (or a compromised one) that streams without end
+// would otherwise grow these buffers until the process dies. We keep the head and stop appending —
+// the parse contract only needs the structured sections, which come well inside this bound.
+export const MAX_SUBPROCESS_OUTPUT_BYTES = 4 * 1024 * 1024;
+
+function capped(prev, chunk, truncatedFlag) {
+  if (prev.length >= MAX_SUBPROCESS_OUTPUT_BYTES) {
+    truncatedFlag.hit = true;
+    return prev;
+  }
+  const next = prev + chunk;
+  if (next.length > MAX_SUBPROCESS_OUTPUT_BYTES) {
+    truncatedFlag.hit = true;
+    return next.slice(0, MAX_SUBPROCESS_OUTPUT_BYTES);
+  }
+  return next;
 }
 
 // Run a command feeding `input` on stdin (so the prompt never touches argv — argv leaks to `ps` and
-// shell history; §18/threat-model A6). Used by anthropic-cli: `claude -p` reads the prompt from stdin.
+// shell history; threat-model A6). Used by every CLI adapter: `claude -p` and `codex exec -` both
+// read the prompt from stdin. There is no argv-prompt variant on purpose.
 export function runWithStdin(cmd, args, { cwd, timeoutMs, input = '', env } = {}) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : undefined });
     let out = '';
     let err = '';
     let timedOut = false;
+    const truncated = { hit: false };
     const timer = setTimeout(() => {
       timedOut = true;
       try {
@@ -59,8 +41,8 @@ export function runWithStdin(cmd, args, { cwd, timeoutMs, input = '', env } = {}
         /* already gone */
       }
     }, timeoutMs);
-    child.stdout.on('data', (d) => (out += d));
-    child.stderr.on('data', (d) => (err += d));
+    child.stdout.on('data', (d) => (out = capped(out, d, truncated)));
+    child.stderr.on('data', (d) => (err = capped(err, d, truncated)));
     child.on('error', (e) => {
       clearTimeout(timer);
       resolve({ code: -1, stdout: out, stderr: String(e), timedOut });
@@ -79,7 +61,7 @@ export function runWithStdin(cmd, args, { cwd, timeoutMs, input = '', env } = {}
 }
 
 // POST JSON with a timeout. Throws on network error, non-2xx, or unparseable body — never returns
-// silently on failure. Uses the built-in global fetch (Node >=18/20/22).
+// silently on failure. Uses the built-in global fetch (Node >=20).
 export async function httpPostJson(url, body, { headers = {}, timeoutMs } = {}) {
   const controller = new AbortController();
   const timer = timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null;
@@ -95,9 +77,20 @@ export async function httpPostJson(url, body, { headers = {}, timeoutMs } = {}) 
       throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text.slice(0, 300)}` : ''}`);
     }
     return await res.json();
+  } catch (err) {
+    // fetch surfaces a timeout as a bare "This operation was aborted", which tells a user neither
+    // that it WAS a timeout, nor how long it waited, nor what to change. Say all three.
+    if (err?.name === 'AbortError' || /aborted/i.test(err?.message ?? '')) {
+      throw new Error(
+        `timed out after ${Math.round((timeoutMs ?? 0) / 1000)}s waiting for ${new URL(url).host}` +
+          ' — the model may still be loading, or the host is busy. Raise `timeout_ms` for this model,' +
+          ' or try a smaller/already-loaded model.',
+      );
+    }
+    throw err;
   } finally {
     if (timer) clearTimeout(timer);
   }
 }
 
-export const defaultRuntime = { runNoStdin, runWithStdin, httpPostJson };
+export const defaultRuntime = { runWithStdin, httpPostJson };

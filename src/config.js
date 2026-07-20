@@ -3,7 +3,7 @@
 // Everything askup does is expressed as ROLES (advisor, curator) mapped to MODEL ENTRIES. A model
 // entry declares its provider (adapter), model id, and a user-assigned TRUST class. No model ids
 // live in code — they live only in config. Sensitivity FILTERS a role's candidates by trust; there
-// are no separate `*_sensitive` roles (Fable review §18).
+// are no separate `*_sensitive` roles.
 
 import fs from 'fs';
 import os from 'os';
@@ -26,8 +26,8 @@ const KNOWN_PROVIDERS = new Set([
 
 const POLICY_DEFAULTS = {
   default_sensitive: false,
-  curate: false, // curator hop is off by default in v0.1 (§18: optional, off by default)
-  panel_threshold: 70, // confidence below this flags low-confidence (and auto-convenes a panel)
+  curate: false, // curator hop is off by default
+  panel_threshold: 70, // confidence below this flags low-confidence (and may auto-convene a panel)
   // Configuring `roles.panel` opts in to a second opinion; this controls whether a LOW-CONFIDENCE
   // answer may convene one AUTOMATICALLY. Auto-firing costs N extra model calls per consult, so it
   // is a separate consent from "a panel exists". Set false to require an explicit --panel.
@@ -135,7 +135,7 @@ function normalizeConfig(raw, filename) {
   }
   // reconciler: optional single model that SYNTHESIZES the panel's views. Omit it and askup returns
   // the raw views with dissent surfaced — it will NOT fake an agreement verdict (free-text agreement
-  // detection is not deterministic; see spec §18).
+  // detection is not deterministic).
   let reconcilerName = null;
   if (roles.reconciler !== undefined && roles.reconciler !== null) {
     if (typeof roles.reconciler !== 'string') {
@@ -175,7 +175,7 @@ function normalizeConfig(raw, filename) {
 // Strict policy validation. A mistyped policy value must be a config error, never silently coerced —
 // e.g. `default_sensitive: "true"` (a string) would otherwise be truthy in config but fail the
 // `=== true` check in isSensitive(), leaving an untrusted advisor eligible (a fail-open). Reported by
-// the Sol review.
+// review.
 const BOOL_POLICY = new Set(['default_sensitive', 'curate', 'panel_auto']);
 const INT_POLICY = {
   panel_threshold: [0, 100],
@@ -209,7 +209,7 @@ function validatePolicyValue(key, value, filename) {
 
 // Only these read-only filesystem tools may ever be opted into. Shell/network/mutating tools (Bash,
 // Write, Edit, WebFetch, WebSearch, …) are rejected outright — granting Bash would make the directory
-// scope meaningless (Sol review, finding 4). Even these read tools do NOT constitute a security
+// scope meaningless. Even these read tools do NOT constitute a security
 // boundary (an advisor with Read can disclose files); they are an explicit, narrow opt-in.
 const ALLOWED_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 
@@ -229,7 +229,7 @@ function normalizeTools(tools, name, filename) {
     }
   }
   if (allow.length > 0 && dirs.length === 0) {
-    // Fable §18: filesystem tools are opt-in AND directory-scoped. Refuse tools without a scope.
+    // filesystem tools are opt-in AND directory-scoped. Refuse tools without a scope.
     throw new AskupError(
       KIND.USAGE,
       `config ${filename}: model '${name}' grants tools (${allow.join(',')}) but no 'dirs' scope — directory scope is required`,
@@ -281,7 +281,7 @@ export function loadConfig({ cwd, env = process.env, home, configPath } = {}) {
 }
 
 // Decide sensitivity. Config-level default and per-path rules set the baseline; the --sensitive
-// flag may only ESCALATE (true wins), never de-escalate (§18: fail-closed, weak executor can't relax it).
+// flag may only ESCALATE (true wins), never de-escalate.
 export function isSensitive(config, { flagSensitive = false, sourcePath = null } = {}) {
   if (config.policy.default_sensitive === true) return true;
   if (flagSensitive === true) return true;
@@ -290,7 +290,7 @@ export function isSensitive(config, { flagSensitive = false, sourcePath = null }
 }
 
 function matchesSensitivePath(globs, sourcePath) {
-  // Normalize Windows separators and a leading ./ so patterns behave the same cross-platform (Sol #8).
+  // Normalize Windows separators and a leading ./ so patterns behave the same cross-platform.
   const norm = String(sourcePath).replace(/\\/g, '/').replace(/^\.\//, '');
   return globs.some((g) => globToRegExp(g).test(norm));
 }
@@ -331,10 +331,15 @@ export function resolveAdvisorChain(config, { sensitive = false } = {}) {
 // Panel members eligible for this request, trust-filtered exactly like the advisor chain. May return
 // [] (no panel configured, or every panelist is untrusted on a sensitive request) — the caller then
 // simply doesn't convene one; a panel is never a hard requirement.
+// A panel fans out to one PAID call per panelist, so its size is a spend multiplier. Cap it: a
+// misconfigured (or hostile) config listing dozens of panelists would otherwise turn a single
+// consult into dozens of billed requests.
+export const MAX_PANELISTS = 5;
+
 export function resolvePanel(config, { sensitive = false } = {}) {
   const panel = (config.roles.panel || []).map((n) => config.models[n]);
-  if (!sensitive) return panel;
-  return panel.filter((m) => SENSITIVE_TRUST.has(m.trust));
+  const eligible = sensitive ? panel.filter((m) => SENSITIVE_TRUST.has(m.trust)) : panel;
+  return eligible.slice(0, MAX_PANELISTS);
 }
 
 // The reconciler model, or null. Sensitivity filters it like everything else: an untrusted reconciler

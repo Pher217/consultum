@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseArgs,
+  runInitInteractive,
   parseStdin,
   runConsult,
   runConfig,
@@ -17,9 +18,9 @@ const LOWREC = '## Recommended Approach\nMaybe.\n## Confidence\n40';
 const CFG = parseConfig(`
 models:
   adv: { provider: ollama,    id: adv-model, trust: trusted }
-  sol: { provider: codex-cli, id: sol-model, trust: untrusted }
+  gpt: { provider: codex-cli, id: gpt-model, trust: untrusted }
 roles:
-  advisor: [adv, sol]
+  advisor: [adv, gpt]
 policy:
   default_sensitive: false
 `);
@@ -27,7 +28,6 @@ policy:
 function okDeps(recText = REC) {
   return {
     httpPostJson: async () => ({ message: { content: recText } }),
-    runNoStdin: async () => ({ code: 0, stdout: recText, stderr: '', timedOut: false }),
     runWithStdin: async () => ({ code: 0, stdout: recText, stderr: '', timedOut: false }),
   };
 }
@@ -106,7 +106,7 @@ test('runConsult: no question on stdin returns usage exit 10', async () => {
 });
 
 test('runConsult: --source-path matching sensitive_paths forces refuse (exit 11)', async () => {
-  const cfg = parseConfig('models:\n  sol: { provider: codex-cli, id: s, trust: untrusted }\nroles:\n  advisor: [sol]\npolicy:\n  sensitive_paths: ["**/secrets/**"]\n');
+  const cfg = parseConfig('models:\n  gpt: { provider: codex-cli, id: s, trust: untrusted }\nroles:\n  advisor: [gpt]\npolicy:\n  sensitive_paths: ["**/secrets/**"]\n');
   const err = sink();
   const code = await runConsult({ stdin: 'q\nc', flags: { sourcePath: 'app/secrets/x' }, config: cfg, deps: okDeps(), out: sink().fn, err: err.fn });
   assert.equal(code, 11);
@@ -114,7 +114,7 @@ test('runConsult: --source-path matching sensitive_paths forces refuse (exit 11)
 });
 
 test('runConsult: sensitive request with only untrusted advisor is refused (exit 11)', async () => {
-  const cfg = parseConfig('models:\n  sol: { provider: codex-cli, id: s, trust: untrusted }\nroles:\n  advisor: [sol]\n');
+  const cfg = parseConfig('models:\n  gpt: { provider: codex-cli, id: s, trust: untrusted }\nroles:\n  advisor: [gpt]\n');
   const err = sink();
   const code = await runConsult({ stdin: 'q\nc', flags: { sensitive: true }, config: cfg, deps: okDeps(), out: sink().fn, err: err.fn });
   assert.equal(code, 11);
@@ -122,7 +122,7 @@ test('runConsult: sensitive request with only untrusted advisor is refused (exit
 });
 
 test('runConsult: provider error returns exit 12, --json error shape', async () => {
-  const badDeps = { httpPostJson: async () => { throw new Error('down'); }, runNoStdin: async () => ({ code: 1, stdout: '', stderr: 'x', timedOut: false }) };
+  const badDeps = { httpPostJson: async () => { throw new Error('down'); }, runWithStdin: async () => ({ code: 1, stdout: '', stderr: 'x', timedOut: false }) };
   const err = sink();
   const code = await runConsult({ stdin: 'q\nc', flags: { json: true }, config: CFG, deps: badDeps, out: sink().fn, err: err.fn });
   assert.equal(code, 12);
@@ -137,12 +137,12 @@ test('runConfig prints models, roles, policy', async () => {
   const code = await runConfig({ flags: {}, config: CFG, out: out.fn, err: sink().fn });
   assert.equal(code, 0);
   const obj = JSON.parse(out.text());
-  assert.deepEqual(obj.roles.advisor, ['adv', 'sol']);
+  assert.deepEqual(obj.roles.advisor, ['adv', 'gpt']);
   assert.equal(obj.models.adv.trust, 'trusted');
 });
 
 test('runDoctor prints resolved roles and flags a sensitive-refused config', async () => {
-  const cfg = parseConfig('models:\n  sol: { provider: codex-cli, id: s, trust: untrusted }\nroles:\n  advisor: [sol]\n');
+  const cfg = parseConfig('models:\n  gpt: { provider: codex-cli, id: s, trust: untrusted }\nroles:\n  advisor: [gpt]\n');
   const out = sink();
   const probe = async () => ({ status: 'ok', detail: '' });
   const code = await runDoctor({ flags: {}, config: cfg, out: out.fn, err: sink().fn, probe });
@@ -181,7 +181,7 @@ test('runInit --sandbox --print includes the config-outside-workspace guidance p
 
 test('generateStarterConfig builds an ordered advisor chain from detected providers', () => {
   const all = generateStarterConfig({ claude: true, codex: true, ollama: true });
-  assert.match(all, /advisor: \[opus, sol\]/);
+  assert.match(all, /advisor: \[claude, codex\]/);
   assert.match(all, /provider: anthropic-cli/);
   const none = generateStarterConfig({ claude: false, codex: false, ollama: false });
   assert.match(none, /advisor: \[local\]/);
@@ -203,7 +203,7 @@ test('runInit --print emits a starter config without writing', () => {
   assert.match(out.text(), /models:/);
 });
 
-test('runInit --sandbox writes OUTSIDE the workspace (XDG), not ./askup.yaml (Fable finding 1)', () => {
+test('runInit --sandbox writes OUTSIDE the workspace (XDG), not ./askup.yaml', () => {
   const prev = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = '/tmp/askup-xdgtest';
   try {
@@ -243,4 +243,79 @@ test('runInit writes when target does not exist', () => {
   assert.equal(code, 0);
   assert.match(written.p, /askup\.yaml$/);
   assert.match(written.c, /models:/);
+});
+
+// --- interactive init ---------------------------------------------------------------------------
+// The wizard is a terminal flow on purpose (no localhost web UI): askup's primary caller runs
+// headless, in a sandbox, over SSH or in CI, where a browser wizard is unreachable.
+
+function scriptedAsk(answers) {
+  const queue = [...answers];
+  const asked = [];
+  return {
+    asked,
+    ask: async (q) => {
+      asked.push(q);
+      if (!queue.length) throw new Error('wizard asked more questions than the script had answers');
+      return queue.shift();
+    },
+  };
+}
+
+test('runInitInteractive writes a config that actually parses', async () => {
+  const written = {};
+  const { ask } = scriptedAsk(['n', 'n', '', 'gemma3:4b', '', '', 'n']);
+  const code = await runInitInteractive({
+    flags: { config: '/tmp/askup-wizard-test.yaml' },
+    out: sink().fn,
+    err: sink().fn,
+    ask,
+    detect: () => ({ claude: true, codex: true, ollama: true }),
+    writeFile: (p, c) => { written.path = p; written.content = c; },
+    exists: () => false,
+    mkdir: () => {},
+  });
+  assert.equal(code, 0);
+  const parsed = parseConfig(written.content);
+  assert.equal(parsed.models.local.id, 'gemma3:4b');
+  assert.equal(parsed.models.local.trust, 'local');
+  assert.deepEqual(parsed.roles.advisor, ['local']);
+  // declining claude/codex must actually leave them out
+  assert.equal(parsed.models.claude, undefined);
+  assert.equal(parsed.models.codex, undefined);
+});
+
+test('runInitInteractive honours default_sensitive and an invalid trust falls back safely', async () => {
+  const written = {};
+  const { ask } = scriptedAsk(['', 'claude-opus-4-8', 'nonsense-trust', 'n', 'n', '', 'y']);
+  await runInitInteractive({
+    flags: { config: '/tmp/askup-wizard-test2.yaml' },
+    out: sink().fn,
+    err: sink().fn,
+    ask,
+    detect: () => ({ claude: true, codex: true, ollama: true }),
+    writeFile: (p, c) => { written.content = c; },
+    exists: () => false,
+    mkdir: () => {},
+  });
+  const parsed = parseConfig(written.content);
+  assert.equal(parsed.models.claude.trust, 'trusted', 'an invalid trust must fall back, never be written through');
+  assert.equal(parsed.policy.default_sensitive, true);
+});
+
+test('runInitInteractive refuses to clobber an existing config without --force', async () => {
+  const { ask } = scriptedAsk(['n', 'n', '', '', '', '', 'n']);
+  const err = sink();
+  const code = await runInitInteractive({
+    flags: { config: '/tmp/exists.yaml' },
+    out: sink().fn,
+    err: err.fn,
+    ask,
+    detect: () => ({ ollama: true }),
+    writeFile: () => { throw new Error('must not write'); },
+    exists: () => true,
+    mkdir: () => {},
+  });
+  assert.equal(code, 10);
+  assert.match(err.text(), /already exists/);
 });

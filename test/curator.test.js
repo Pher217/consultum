@@ -45,11 +45,11 @@ test('wrapUntrusted uses a matched nonce so injected close-markers cannot forge 
 });
 
 test('buildAdvisorPrompt wraps BOTH the question and the packet as untrusted', () => {
-  const p = buildAdvisorPrompt('the question', 'the packet', { curatedBy: 'glm' });
+  const p = buildAdvisorPrompt('the question', 'the packet', { curatedBy: 'curator-model' });
   assert.match(p, /the question/);
   assert.match(p, /the packet/);
-  assert.match(p, /curated by glm/);
-  // both are inside untrusted-data wrappers (Sol finding 6: the question is worker-controlled too)
+  assert.match(p, /curated by curator-model/);
+  // both are inside untrusted-data wrappers
   const wrappers = p.match(/<<<ASKUP-UNTRUSTED-DATA/g) || [];
   assert.equal(wrappers.length, 2);
 });

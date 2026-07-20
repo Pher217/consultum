@@ -9,8 +9,8 @@
 import { createHash } from 'crypto';
 import { AskupError, KIND } from './errors.js';
 
-const SEP = '\u0000'; // NUL separator, written as an ASCII escape so this file stays text (a raw NUL
-// byte makes git classify the source as binary and hides its diff from review — Sol finding 9).
+const SEP = '\u0000'; // NUL separator, written as an ASCII escape so this file stays text: a raw NUL
+// byte makes git classify the source as binary and hides its diff from review entirely.
 
 // A stable signature of a consult's EXACT content, for the re-consult dedup guard. The NUL separator
 // makes ("a","bc") and ("ab","c") produce different signatures. This is an exact-content hash, NOT a

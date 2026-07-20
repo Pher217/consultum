@@ -19,10 +19,10 @@ Edit conftest.py.
 const CFG = parseConfig(`
 models:
   adv: { provider: ollama,    id: adv-model, trust: trusted }
-  sol: { provider: codex-cli, id: sol-model, trust: untrusted }
+  gpt: { provider: codex-cli, id: gpt-model, trust: untrusted }
   cur: { provider: ollama,    id: cur-model, trust: untrusted }
 roles:
-  advisor: [adv, sol]
+  advisor: [adv, gpt]
   curator: cur
 policy:
   default_sensitive: false
@@ -42,7 +42,6 @@ function deps(overrides = {}) {
       if (isCurator(body)) return { message: { content: 'CURATED: objective ... facts ...' } };
       return { message: { content: REC }, prompt_eval_count: 10, eval_count: 6 };
     }),
-    runNoStdin: overrides.runNoStdin ?? (async () => ({ code: 0, stdout: REC, stderr: '', timedOut: false })),
     runWithStdin: overrides.runWithStdin ?? (async () => ({ code: 0, stdout: REC, stderr: '', timedOut: false })),
   };
 }
@@ -75,9 +74,9 @@ test('e2e: curate:true runs the curator and records provenance', async () => {
 test('e2e: a sensitive request with only an untrusted advisor is REFUSED, not downgraded', async () => {
   const cfg = parseConfig(`
 models:
-  sol: { provider: codex-cli, id: sol-model, trust: untrusted }
+  gpt: { provider: codex-cli, id: gpt-model, trust: untrusted }
 roles:
-  advisor: [sol]
+  advisor: [gpt]
 `);
   await assert.rejects(
     () => consult({ question: 'q', sensitive: true, config: cfg, deps: deps() }),
@@ -109,10 +108,9 @@ roles:
 test('e2e: fallback chain — first advisor down, second answers', async () => {
   const d = deps({
     httpPostJson: async () => { throw new Error('ollama connection refused'); }, // adv (ollama) down
-    runNoStdin: async () => ({ code: 0, stdout: REC, stderr: '', timedOut: false }), // sol (codex) up
   });
   const rec = await consult({ question: 'q', config: CFG, deps: d });
-  assert.equal(rec.provenance.advisorModel, 'sol-model');
+  assert.equal(rec.provenance.advisorModel, 'gpt-model');
 });
 
 test('e2e: malformed advisor output is retried once, then parses', async () => {
@@ -132,7 +130,7 @@ test('e2e: malformed advisor output is retried once, then parses', async () => {
 test('e2e: whole chain unreachable throws provider-error (exit 12)', async () => {
   const d = deps({
     httpPostJson: async () => { throw new Error('down'); }, // adv (ollama) down
-    runWithStdin: async () => ({ code: 1, stdout: '', stderr: 'boom', timedOut: false }), // sol (codex) fails
+    runWithStdin: async () => ({ code: 1, stdout: '', stderr: 'boom', timedOut: false }), // gpt (codex) fails
   });
   await assert.rejects(() => consult({ question: 'q', config: CFG, deps: d }), (e) => e.kind === 'provider-error' && e.exitCode === 12);
 });
@@ -194,12 +192,12 @@ policy:
 });
 
 test('e2e: a sourcePath matching sensitive_paths forces sensitive and refuses an untrusted-only chain', async () => {
-  // Regression for Sol finding 2: per-path sensitivity must actually take effect end-to-end.
+  // Regression: per-path sensitivity must actually take effect end-to-end.
   const cfg = parseConfig(`
 models:
-  sol: { provider: codex-cli, id: sol-model, trust: untrusted }
+  gpt: { provider: codex-cli, id: gpt-model, trust: untrusted }
 roles:
-  advisor: [sol]
+  advisor: [gpt]
 policy:
   sensitive_paths: ["**/secrets/**"]
 `);
@@ -211,7 +209,7 @@ policy:
 
 test('a credential/config (USAGE) error fails loud — it does NOT silently fall through to the next advisor', async () => {
   // adv (openai) has an api_key_file that violates the shape gate (multi-line) -> USAGE from resolveCredential.
-  // The chain must abort with USAGE, not try `local` next (Fable finding: fail loud on USAGE, both paths).
+  // The chain must abort with USAGE, not try `local` next.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'askup-ct-'));
   const badKey = path.join(dir, 'k');
   fs.writeFileSync(badKey, 'line1\nline2\n');

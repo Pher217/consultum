@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { redactSecrets } from '../src/redact.js';
 
 // The 10-case redaction regression (spec §16 acceptance criterion). Ported from the hardened
-// coding-structure implementation. If any of these regress, secrets can cross a model boundary.
+// production implementation. If any of these regress, secrets can cross a model boundary.
 
 test('1. AWS secret access key assignment is redacted', () => {
   const out = redactSecrets('AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY');

@@ -38,9 +38,9 @@ Point a model at it:
 
 ```yaml
 models:
-  opus:
+  claude:
     provider: anthropic-cli
-    id: claude-opus-4-8
+    id: claude-claude-4-8
     trust: trusted
     token_file: ~/.config/askup/claude-token   # injected as CLAUDE_CODE_OAUTH_TOKEN into the subprocess
     # token_env: CLAUDE_CODE_OAUTH_TOKEN        # override the var name if your file holds an API key

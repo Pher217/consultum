@@ -41,11 +41,16 @@ const LINT_PATTERNS = [
   { name: 'scp', re: /\bscp\s+\S/i },
   { name: 'base64-decode', re: /\bbase64\s+(-d|--decode)\b/i },
   { name: 'powershell', re: /\b(powershell|pwsh|iex|Invoke-Expression|iwr|irm|Invoke-WebRequest)\b/i },
-  { name: 'command-substitution', re: /\$\([^)]+\)|`[^`]+`/ },
+  // Only REAL command substitution. A previous version also flagged any `backtick span`, which fires
+  // on ordinary prose ("set it in `config.js`, then run `npm test`") — i.e. on essentially every
+  // technical answer. A warning that is always on is a warning nobody reads, which would quietly
+  // disable the one signal threat-model A3 depends on. Dangerous content INSIDE backticks is still
+  // caught: every other pattern scans the same text regardless of markdown formatting.
+  { name: 'command-substitution', re: /\$\([^)]+\)/ },
 ];
 
 // Scan EVERY returned field — a command hidden in an unscanned section (e.g. Risks) would otherwise
-// reach the weak executor with no warning (Sol finding 5).
+// reach the weak executor with no warning.
 const SCANNED_FIELDS = ['problem', 'facts', 'assumptions', 'recommendation', 'why', 'implementation', 'alternatives', 'risks', 'validation'];
 
 export function lintGuidance(rec) {
@@ -55,6 +60,35 @@ export function lintGuidance(rec) {
     if (re.test(haystack)) warnings.push(`advice contains a possible shell/network command (${name}) — review before running, never pipe to a shell unexamined`);
   }
   return warnings;
+}
+
+// Extract a 0-100 confidence. Returns null when nothing parseable is present.
+//
+// This used to be `match(/\d{1,3}/)` — the FIRST digit run anywhere in the section — which read
+// "On a 0-100 scale, 85" as 0 and "7 out of 10" as 7. That is not cosmetic: confidence drives
+// `lowConfidence`, exit code 14, and (with a panel configured) whether extra paid advisors are
+// convened. A misparse silently changes control flow and spend, so the explicit forms are matched
+// first and the bare-number fallback takes the LAST number rather than the first.
+export function parseConfidence(text) {
+  if (!text) return null;
+  const clamp = (n) => Math.max(0, Math.min(100, n));
+
+  const outOf100 = text.match(/(\d{1,3})\s*(?:\/|\s+out\s+of\s+)\s*100\b/i);
+  if (outOf100) return clamp(parseInt(outOf100[1], 10));
+
+  // "7 out of 10" / "7/10" is a 0-10 scale — rescale rather than reporting 7.
+  const outOf10 = text.match(/(\d{1,2})(?:\.\d+)?\s*(?:\/|\s+out\s+of\s+)\s*10\b/i);
+  if (outOf10) return clamp(parseInt(outOf10[1], 10) * 10);
+
+  const pct = text.match(/(\d{1,3})\s*%/);
+  if (pct) return clamp(parseInt(pct[1], 10));
+
+  // Fallback: the LAST standalone integer. Prose like "on a 0-100 scale, 85" states the scale
+  // before the value, so the first number is systematically the wrong one.
+  const all = [...text.matchAll(/(?:^|[^\d.])(\d{1,3})(?![\d.])/g)];
+  if (all.length) return clamp(parseInt(all[all.length - 1][1], 10));
+
+  return null;
 }
 
 // Parse advisor text into the structured recommendation. Throws MALFORMED_OUTPUT when the parse
@@ -71,12 +105,49 @@ export function parseRecommendation(text, { panelThreshold = 70 } = {}) {
     if (currentKey && buf.length) sections[currentKey] = (sections[currentKey] ? sections[currentKey] + '\n' : '') + buf.join('\n').trim();
     buf = [];
   };
+  // Header detection is deliberately CONSERVATIVE. The old regex treated any line starting with `**`
+  // as a header, so a routine bold lead-in ("**Note:** also do X.") was read as an unrecognized
+  // header and every following line of that section was silently discarded — the advisor's answer
+  // arrived truncated with no error. Models emit bold lead-ins constantly. Silent loss is the worst
+  // failure mode here, so anything not clearly a section header is treated as CONTENT.
+  let inFence = false;
   for (const line of lines) {
-    const m = line.match(/^\s{0,3}(#{1,6}|\*\*)\s*(.+?)\s*(\*\*)?\s*:?\s*$/);
-    if (m) {
-      const key = headerToKey(m[2].replace(/\*\*/g, ''));
-      flush();
-      currentKey = key; // may be null (unrecognized header) — its body is dropped
+    // Inside a fenced code block nothing is a header: shell comments (`# install deps`) would
+    // otherwise fragment the section around them.
+    if (/^\s{0,3}(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      if (currentKey) buf.push(line);
+      continue;
+    }
+    if (inFence) {
+      if (currentKey) buf.push(line);
+      continue;
+    }
+
+    const hashed = line.match(/^\s{0,3}(#{1,6})\s*(.+?)\s*:?\s*$/);
+    // A bold line counts as a header ONLY if the whole line is the bold span (plus optional colon).
+    const bolded = line.match(/^\s{0,3}\*\*\s*([^*]+?)\s*\*\*\s*:?\s*$/);
+
+    if (hashed) {
+      const key = headerToKey(hashed[2]);
+      if (key || hashed[1].length <= 2) {
+        // A recognized header, or an unrecognized top-level (#/##) one: a real section boundary.
+        // An unrecognized boundary sets currentKey = null, so its body is dropped by contract.
+        flush();
+        currentKey = key;
+      } else if (currentKey) {
+        // `###`+ that maps to nothing is a SUB-heading inside the current section, not a new
+        // section — keep it and everything under it.
+        buf.push(line);
+      }
+    } else if (bolded) {
+      const key = headerToKey(bolded[1]);
+      if (key) {
+        flush();
+        currentKey = key;
+      } else if (currentKey) {
+        buf.push(line);
+      }
     } else if (currentKey) {
       buf.push(line);
     }
@@ -92,12 +163,11 @@ export function parseRecommendation(text, { panelThreshold = 70 } = {}) {
   if (!rec.recommendation) {
     throw new AskupError(KIND.MALFORMED_OUTPUT, 'advisor output missing required "Recommended Approach" section');
   }
-  const confText = sections.confidence;
-  const confMatch = confText && confText.match(/\d{1,3}/);
-  if (!confMatch) {
+  const confidence = parseConfidence(sections.confidence);
+  if (confidence === null) {
     throw new AskupError(KIND.MALFORMED_OUTPUT, 'advisor output missing a parseable "Confidence" (0-100) value');
   }
-  rec.confidence = Math.max(0, Math.min(100, parseInt(confMatch[0], 10)));
+  rec.confidence = confidence;
   rec.lowConfidence = rec.confidence < panelThreshold;
   rec.warnings = lintGuidance(rec);
   return rec;
