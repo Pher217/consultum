@@ -36,6 +36,14 @@ Configure a `roles.reconciler` (a *capable* model — reconciling several views 
 answering, and small models routinely miss the section contract) to get a real synthesis pass that
 names the dissent. A panel drawn from one provider family is flagged as `correlated`.
 
+**Cost — know this before enabling auto.** One consult with a panel of N costs
+`1 primary + N panelists (concurrent) + up to 2 reconciler calls` (the reconciler retries once on
+unparseable output, same as the advisor ladder). A weak reconciler therefore costs *two* calls to
+still fail. `policy.panel_auto` (default `true`) controls whether a low-confidence answer may convene
+one automatically — set it `false` to require an explicit `--panel`, because "a panel is configured"
+and "every sub-threshold answer may fan out" are different decisions. Panel calls are *not* counted
+against `max_consults_per_task` (that counts consults, not fan-out).
+
 ## Roles → models (config)
 
 Everything is roles mapped to model entries; a model entry declares provider, invocation, and a
