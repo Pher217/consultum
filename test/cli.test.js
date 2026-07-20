@@ -9,6 +9,11 @@ import {
   runDoctor,
   runInit,
   generateStarterConfig,
+  cliStatus,
+  ollamaStatus,
+  isUsable,
+  defaultDetect,
+  pickOllamaTag,
 } from '../src/cli.js';
 import { parseConfig } from '../src/config.js';
 
@@ -161,6 +166,139 @@ test('runDoctor exits non-zero when no advisor is usable, and hints at a blocked
   assert.match(out.text(), /no usable advisor/);
 });
 
+// ---- ok-unverified (fix 1): doctor must not report a bare 'ok' for an unverified model id --------
+
+test('cliStatus reports ok-unverified when the binary is on PATH (the model id itself is not validated)', () => {
+  const s = cliStatus('node', {}, null);
+  assert.equal(s.status, 'ok-unverified');
+  assert.match(s.detail, /model id not verified/);
+});
+
+test('cliStatus reports not-on-path when the binary is missing', () => {
+  const s = cliStatus('definitely-not-a-real-binary-xyz123', {}, null);
+  assert.equal(s.status, 'not-on-path');
+});
+
+test('isUsable treats ok and ok-unverified as usable; other statuses are not', () => {
+  assert.equal(isUsable('ok'), true);
+  assert.equal(isUsable('ok-unverified'), true);
+  assert.equal(isUsable('model-missing'), false);
+  assert.equal(isUsable('egress-blocked'), false);
+  assert.equal(isUsable('not-authed'), false);
+  assert.equal(isUsable(undefined), false);
+});
+
+test('ollamaStatus: a pulled tag is ok', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ models: [{ name: 'llama3.1:8b', size: 100 }] }) });
+  try {
+    const s = await ollamaStatus('http://localhost:11434', 'llama3.1:8b');
+    assert.equal(s.status, 'ok');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('ollamaStatus: a :cloud tag is ok-unverified even when absent from the local tag list', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ models: [{ name: 'llama3.1:8b' }] }) });
+  try {
+    const s = await ollamaStatus('http://localhost:11434', 'glm-5.2:cloud');
+    assert.equal(s.status, 'ok-unverified');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('ollamaStatus: a missing non-cloud tag is still model-missing', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ models: [{ name: 'llama3.1:8b' }] }) });
+  try {
+    const s = await ollamaStatus('http://localhost:11434', 'mistral:7b');
+    assert.equal(s.status, 'model-missing');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('runDoctor: ok-unverified counts as usable — a CLI-only advisor chain does not trip PROVIDER_ERROR (regression)', async () => {
+  const cfg = parseConfig('models:\n  a: { provider: codex-cli, id: gpt-5-codex, trust: untrusted }\nroles:\n  advisor: [a]\n');
+  const out = sink();
+  const probe = async () => ({ status: 'ok-unverified', detail: 'on PATH' });
+  const code = await runDoctor({ flags: {}, config: cfg, out: out.fn, err: sink().fn, probe });
+  assert.equal(code, 0);
+  assert.doesNotMatch(out.text(), /no usable advisor/);
+});
+
+test('runDoctor: the ok-unverified footnote appears when a model reports it, and is absent otherwise', async () => {
+  const cfg = parseConfig('models:\n  a: { provider: codex-cli, id: gpt-5-codex, trust: untrusted }\nroles:\n  advisor: [a]\n');
+
+  const outUnverified = sink();
+  const probeUnverified = async () => ({ status: 'ok-unverified', detail: 'on PATH' });
+  const codeUnverified = await runDoctor({ flags: {}, config: cfg, out: outUnverified.fn, err: sink().fn, probe: probeUnverified });
+  assert.equal(codeUnverified, 0);
+  assert.match(outUnverified.text(), /ok-unverified: reachable and usable/);
+
+  const outVerified = sink();
+  const probeVerified = async () => ({ status: 'ok', detail: 'model pulled' });
+  const codeVerified = await runDoctor({ flags: {}, config: cfg, out: outVerified.fn, err: sink().fn, probe: probeVerified });
+  assert.equal(codeVerified, 0);
+  assert.doesNotMatch(outVerified.text(), /ok-unverified: reachable and usable/);
+});
+
+// ---- ollama tag detection (fix 2): init should offer a model the user actually has ---------------
+
+test('pickOllamaTag picks the largest non-cloud, non-embedding tag', async () => {
+  const mockFetch = async () => ({
+    ok: true,
+    json: async () => ({
+      models: [
+        { name: 'bge-m3:latest', size: 500 },
+        { name: 'glm-5.2:cloud', size: 900 },
+        { name: 'gemma3:4b', size: 3000 },
+        { name: 'gemma4:31b-mlx', size: 18000 },
+        { name: 'nomic-embed-text:latest', size: 400 },
+      ],
+    }),
+  });
+  assert.equal(await pickOllamaTag(mockFetch), 'gemma4:31b-mlx');
+});
+
+test('pickOllamaTag returns null when the tag list is empty', async () => {
+  const mockFetch = async () => ({ ok: true, json: async () => ({ models: [] }) });
+  assert.equal(await pickOllamaTag(mockFetch), null);
+});
+
+test('pickOllamaTag returns null on a non-ok HTTP response', async () => {
+  const mockFetch = async () => ({ ok: false });
+  assert.equal(await pickOllamaTag(mockFetch), null);
+});
+
+test('pickOllamaTag returns null when the request fails or times out', async () => {
+  const mockFetch = async () => { throw new Error('AbortError: The operation was aborted'); };
+  assert.equal(await pickOllamaTag(mockFetch), null);
+});
+
+test('defaultDetect --sandbox never makes the ollama network probe', async () => {
+  const realFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async (...args) => { called = true; return realFetch(...args); };
+  try {
+    const detected = await defaultDetect({ sandbox: true });
+    assert.equal(detected.ollamaModel, null);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('generateStarterConfig uses detected.ollamaModel when present, falls back to the placeholder otherwise', () => {
+  const withTag = generateStarterConfig({ ollama: true, ollamaModel: 'gemma4:31b-mlx' });
+  assert.match(withTag, /id: gemma4:31b-mlx/);
+  const withoutTag = generateStarterConfig({ ollama: true, ollamaModel: null });
+  assert.match(withoutTag, /id: llama3\.1:8b/);
+});
+
 test('generateStarterConfig --sandbox emits HTTP-only adapters and a request-shaped chain', () => {
   const cfg = generateStarterConfig({ claude: true, codex: true, ollama: true }, { sandbox: true });
   assert.match(cfg, /provider: anthropic-api/);
@@ -172,9 +310,9 @@ test('generateStarterConfig --sandbox emits HTTP-only adapters and a request-sha
   assert.ok(parsed.roles.advisor.length >= 1);
 });
 
-test('runInit --sandbox --print includes the config-outside-workspace guidance path', () => {
+test('runInit --sandbox --print includes the config-outside-workspace guidance path', async () => {
   const out = sink();
-  const code = runInit({ flags: { sandbox: true, print: true }, out: out.fn, err: sink().fn, detect: () => ({}), writeFile: () => {} });
+  const code = await runInit({ flags: { sandbox: true, print: true }, out: out.fn, err: sink().fn, detect: () => ({}), writeFile: () => {} });
   assert.equal(code, 0);
   assert.match(out.text(), /anthropic-api/);
 });
@@ -187,29 +325,29 @@ test('generateStarterConfig builds an ordered advisor chain from detected provid
   assert.match(none, /advisor: \[local\]/);
 });
 
-test('runInit uses the real provider detector without crashing (regression: probeOnPath rename)', () => {
+test('runInit uses the real provider detector without crashing (regression: probeOnPath rename)', async () => {
   const out = sink();
-  const code = runInit({ flags: { print: true }, out: out.fn, err: sink().fn }); // no detect injected -> defaultDetect
+  const code = await runInit({ flags: { print: true }, out: out.fn, err: sink().fn }); // no detect injected -> defaultDetect
   assert.equal(code, 0);
   assert.match(out.text(), /models:/);
 });
 
-test('runInit --print emits a starter config without writing', () => {
+test('runInit --print emits a starter config without writing', async () => {
   const out = sink();
   let wrote = false;
-  const code = runInit({ flags: { print: true }, out: out.fn, err: sink().fn, detect: () => ({ claude: true, codex: false, ollama: true }), writeFile: () => { wrote = true; } });
+  const code = await runInit({ flags: { print: true }, out: out.fn, err: sink().fn, detect: () => ({ claude: true, codex: false, ollama: true }), writeFile: () => { wrote = true; } });
   assert.equal(code, 0);
   assert.equal(wrote, false);
   assert.match(out.text(), /models:/);
 });
 
-test('runInit --sandbox writes OUTSIDE the workspace (XDG), not ./consultum.yaml', () => {
+test('runInit --sandbox writes OUTSIDE the workspace (XDG), not ./consultum.yaml', async () => {
   const prev = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = '/tmp/consultum-xdgtest';
   try {
     let written = null;
     let mkdirp = null;
-    const code = runInit({
+    const code = await runInit({
       flags: { sandbox: true },
       out: sink().fn,
       err: sink().fn,
@@ -229,17 +367,17 @@ test('runInit --sandbox writes OUTSIDE the workspace (XDG), not ./consultum.yaml
   }
 });
 
-test('runInit refuses to overwrite an existing config without --force', () => {
+test('runInit refuses to overwrite an existing config without --force', async () => {
   const err = sink();
-  const code = runInit({ flags: {}, out: sink().fn, err: err.fn, detect: () => ({ ollama: true }), exists: () => true, writeFile: () => { throw new Error('should not write'); }, cwd: '/tmp' });
+  const code = await runInit({ flags: {}, out: sink().fn, err: err.fn, detect: () => ({ ollama: true }), exists: () => true, writeFile: () => { throw new Error('should not write'); }, cwd: '/tmp' });
   assert.equal(code, 10);
   assert.match(err.text(), /already exists/);
 });
 
-test('runInit writes when target does not exist', () => {
+test('runInit writes when target does not exist', async () => {
   const out = sink();
   let written = null;
-  const code = runInit({ flags: {}, out: out.fn, err: sink().fn, detect: () => ({ ollama: true }), exists: () => false, writeFile: (p, c) => { written = { p, c }; }, cwd: '/tmp' });
+  const code = await runInit({ flags: {}, out: out.fn, err: sink().fn, detect: () => ({ ollama: true }), exists: () => false, writeFile: (p, c) => { written = { p, c }; }, cwd: '/tmp' });
   assert.equal(code, 0);
   assert.match(written.p, /consultum\.yaml$/);
   assert.match(written.c, /models:/);
@@ -318,4 +456,26 @@ test('runInitInteractive refuses to clobber an existing config without --force',
   });
   assert.equal(code, 10);
   assert.match(err.text(), /already exists/);
+});
+
+test('pickOllamaTag honours OLLAMA_HOST when the daemon is not on the default port', async () => {
+  // GIVEN OLLAMA_HOST points at a non-default host (bare host:port, no scheme)
+  // WHEN pickOllamaTag probes for installed tags
+  // THEN it queries that host, not localhost:11434
+  const prev = process.env.OLLAMA_HOST;
+  process.env.OLLAMA_HOST = '10.0.0.5:9999';
+  const seen = [];
+  const fakeFetch = async (url) => {
+    seen.push(url);
+    return { ok: true, json: async () => ({ models: [{ name: 'mistral:7b', size: 4_000_000_000 }] }) };
+  };
+  try {
+    const picked = await pickOllamaTag(fakeFetch);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0], 'http://10.0.0.5:9999/api/tags');
+    assert.equal(picked, 'mistral:7b');
+  } finally {
+    if (prev === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = prev;
+  }
 });
