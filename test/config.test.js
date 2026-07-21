@@ -186,6 +186,122 @@ test('isSensitive: default_sensitive forces true; flag only escalates', () => {
   assert.equal(isSensitive(on, { flagSensitive: false }), true);
 });
 
+test('parseConfig rejects an unknown top-level key', () => {
+  // GIVEN a config with a stray top-level key
+  // WHEN parsed
+  // THEN it errors with KIND.USAGE (exit 10) and names the offending key
+  const bad = `models:\n  x: { provider: ollama, id: y, trust: local }\nroles:\n  advisor: x\npolciy:\n  default_sensitive: true\n`;
+  assert.throws(
+    () => parseConfig(bad, 'test.yaml'),
+    (e) => e.kind === 'usage' && e.exitCode === 10 && /unknown top-level key 'polciy'/.test(e.message),
+  );
+});
+
+test("parseConfig rejects a typo'd policy key ('defualt_sensitive') instead of silently defaulting default_sensitive to false", () => {
+  // GIVEN a config with `defualt_sensitive: true` (typo of `default_sensitive`)
+  // WHEN parsed
+  // THEN it must hard-error, NOT silently ignore the typo and leave default_sensitive at its false
+  //      default (which would be a fail-open: the user believes every request is sensitive, but
+  //      isSensitive() would return false and requests could reach untrusted third-party providers).
+  const bad = `models:\n  x: { provider: ollama, id: y, trust: local }\nroles:\n  advisor: x\npolicy:\n  defualt_sensitive: true\n`;
+  assert.throws(
+    () => parseConfig(bad, 'test.yaml'),
+    (e) => e.kind === 'usage' && e.exitCode === 10 && /unknown policy key 'defualt_sensitive'/.test(e.message) && /default_sensitive/.test(e.message),
+  );
+});
+
+test('parseConfig rejects an Object.prototype key as a policy key (no prototype-chain bypass or crash)', () => {
+  // GIVEN a policy with keys that live on Object.prototype (toString, constructor, valueOf), WHEN
+  // parsed, THEN each is a clean unknown-policy-key usage error — NOT accepted as "known" via the
+  // prototype chain (which then crashed validatePolicyValue with an uncaught TypeError). Found by an
+  // independent review probing `policy: { toString: 1 }`.
+  for (const proto of ['toString', 'constructor', 'valueOf', 'hasOwnProperty']) {
+    const bad = `models:\n  x: { provider: ollama, id: y, trust: local }\nroles:\n  advisor: x\npolicy:\n  ${proto}: 1\n`;
+    assert.throws(
+      () => parseConfig(bad, 'test.yaml'),
+      (e) => e.kind === 'usage' && e.exitCode === 10 && new RegExp(`unknown policy key '${proto}'`).test(e.message),
+      `policy key '${proto}' must be a clean usage error`,
+    );
+  }
+});
+
+test('parseConfig rejects an unknown roles key', () => {
+  // GIVEN a config with a stray roles key
+  // WHEN parsed
+  // THEN it errors and names the offending key
+  const bad = `models:\n  x: { provider: ollama, id: y, trust: local }\nroles:\n  advisor: x\n  advizor: x\n`;
+  assert.throws(
+    () => parseConfig(bad, 'test.yaml'),
+    (e) => e.kind === 'usage' && e.exitCode === 10 && /unknown roles key 'advizor'/.test(e.message),
+  );
+});
+
+test('parseConfig rejects an unknown model-spec key', () => {
+  // GIVEN a model spec with a typo'd key ('api_key_ev' instead of 'api_key_env')
+  // WHEN parsed
+  // THEN it errors and names the offending key
+  const bad = `models:\n  x: { provider: openai, id: y, trust: untrusted, api_key_ev: OPENAI_API_KEY }\nroles:\n  advisor: x\n`;
+  assert.throws(
+    () => parseConfig(bad, 'test.yaml'),
+    (e) => e.kind === 'usage' && e.exitCode === 10 && /model 'x' has unknown key 'api_key_ev'/.test(e.message),
+  );
+});
+
+test('parseConfig rejects an unknown key inside a model tools mapping', () => {
+  // GIVEN a model's `tools` mapping with a stray key
+  // WHEN parsed
+  // THEN it errors and names the offending key
+  const bad = `models:\n  o: { provider: anthropic-cli, id: x, trust: trusted, tools: { allow: [Read], dirs: [./ctx], allwo: [Read] } }\nroles:\n  advisor: o\n`;
+  assert.throws(
+    () => parseConfig(bad, 'test.yaml'),
+    (e) => e.kind === 'usage' && e.exitCode === 10 && /tools has unknown key 'allwo'/.test(e.message),
+  );
+});
+
+test('parseConfig accepts a config using every known key in both snake_case and camelCase spellings (regression guard against over-rejection)', () => {
+  // GIVEN a config exercising every known top-level, roles, policy, and model-spec key, once in
+  // snake_case and once in camelCase for the model-spec aliases
+  // WHEN parsed
+  // THEN it parses without error and all fields land correctly
+  const cfg = `
+models:
+  snake: { provider: anthropic-cli, id: m1, trust: trusted, base_url: http://a, api_key_env: A_ENV, api_key_file: ./a-key, token_env: A_TOK, token_file: ./a-tok, timeout_ms: 1000, tools: { allow: [Read], dirs: [./ctx] } }
+  camel: { provider: openai, id: m2, trust: untrusted, baseUrl: http://b, apiKeyEnv: B_ENV, apiKeyFile: ./b-key, tokenEnv: B_TOK, tokenFile: ./b-tok, timeoutMs: 2000 }
+roles:
+  advisor: [snake, camel]
+  curator: snake
+  panel: [snake, camel]
+  reconciler: snake
+policy:
+  default_sensitive: false
+  curate: true
+  panel_threshold: 50
+  panel_auto: false
+  max_consults_per_task: 2
+  min_attempts_before_debug_consult: 1
+  sensitive_paths: ["**/secrets/**"]
+`;
+  const c = parseConfig(cfg, 'test.yaml');
+  assert.equal(c.models.snake.baseUrl, 'http://a');
+  assert.equal(c.models.snake.apiKeyEnv, 'A_ENV');
+  assert.equal(c.models.snake.apiKeyFile, './a-key');
+  assert.equal(c.models.snake.tokenEnv, 'A_TOK');
+  assert.equal(c.models.snake.tokenFile, './a-tok');
+  assert.equal(c.models.snake.timeoutMs, 1000);
+  assert.deepEqual(c.models.snake.tools, { allow: ['Read'], dirs: ['./ctx'] });
+  assert.equal(c.models.camel.baseUrl, 'http://b');
+  assert.equal(c.models.camel.apiKeyEnv, 'B_ENV');
+  assert.equal(c.models.camel.apiKeyFile, './b-key');
+  assert.equal(c.models.camel.tokenEnv, 'B_TOK');
+  assert.equal(c.models.camel.tokenFile, './b-tok');
+  assert.equal(c.models.camel.timeoutMs, 2000);
+  assert.equal(c.roles.curator, 'snake');
+  assert.deepEqual(c.roles.panel, ['snake', 'camel']);
+  assert.equal(c.roles.reconciler, 'snake');
+  assert.equal(c.policy.curate, true);
+  assert.equal(c.policy.panel_threshold, 50);
+});
+
 test('isSensitive: a sourcePath matching sensitive_paths forces sensitive', () => {
   const c = parseConfig(`models:\n  o: { provider: anthropic-cli, id: x, trust: trusted }\nroles:\n  advisor: o\npolicy:\n  sensitive_paths: ["**/secrets/**", "*.pem"]\n`);
   assert.equal(isSensitive(c, { sourcePath: 'app/secrets/db.txt' }), true);

@@ -14,9 +14,11 @@
   "homepage": "https://github.com/Pher217/consultum#readme",
   "bugs": { "url": "https://github.com/Pher217/consultum/issues" },
   "scripts": {
-    "test": "node --test",
+    "test": "npm run typecheck && node --test",
     "lint": "node scripts/lint.mjs",
-    "prepublishOnly": "npm test"
+    "typecheck": "tsc --noEmit --strict -p typecheck/tsconfig.json",
+    "test:contract": "CONSULTUM_RUN_CONTRACT=1 node --test test/contract/pack-contract.mjs",
+    "prepublishOnly": "npm test && npm run test:contract"
   },
   "keywords": ["llm", "advisory", "escalation", "multi-model", "orchestration", "ollama", "codex", "anthropic", "ai-agents", "read-only-advisor"],
   "license": "MIT",
@@ -24,5 +26,8 @@
   "engines": { "node": ">=20" },
   "dependencies": {
     "yaml": "^2.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
   }
 }

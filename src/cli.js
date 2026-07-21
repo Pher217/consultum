@@ -35,13 +35,49 @@ Exit codes: 0 ok · 10 usage · 11 refused-by-policy · 12 provider-error · 13 
 
 // ---- arg + stdin parsing ---------------------------------------------------
 
+// Which flags each command actually implements. An unknown flag must NEVER be silently ignored:
+// `--sensitve` (a typo for --sensitive) previously parsed as a positional and the consult proceeded
+// as NON-sensitive to an untrusted third-party advisor. That is a fail-open in the one control whose
+// entire purpose is failing closed, so an unrecognized flag is a hard usage error.
+// `--json` is listed only for `consult` — it is the only command with a JSON success contract.
+// `config` always emits JSON, and `doctor` is human-readable; accepting --json there would imply a
+// machine-readable success shape that does not exist.
+const COMMAND_FLAGS = {
+  consult: ['--sensitive', '--panel', '--curate', '--no-curate', '--json', '--task-id', '--source-path', '--config'],
+  init: ['--interactive', '-i', '--print', '--force', '--sandbox', '--config'],
+  doctor: ['--config'],
+  config: ['--config'],
+};
+// Terminal flags: valid with any command (or none), and they never consult, so they never spend.
+const GLOBAL_FLAGS = ['--help', '-h', '--version', '-v'];
+// Flags that consume the following token as their value.
+const VALUE_FLAGS = new Set(['--task-id', '--source-path', '--config']);
+
 export function parseArgs(argv) {
   const rest = [...argv];
   // The command is the first token that is not a flag (so `consultum --help` has no command).
   const command = rest.length && !rest[0].startsWith('-') ? rest.shift() : undefined;
-  const flags = { _: [] };
+  // `seen` records every flag LITERAL encountered (recognized or not) so checkArgs can reject a flag
+  // that is real but not valid for THIS command (e.g. --panel on doctor) — those set a `flags.*`
+  // field and would otherwise never appear in `unknown`. `unknown`/`missingValue` are collected
+  // rather than thrown so the caller can still honour --json when reporting the failure.
+  const flags = { _: [], seen: [], unknown: [], missingValue: [] };
+  const VALUE_DEST = { '--task-id': 'taskId', '--source-path': 'sourcePath', '--config': 'config' };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
+    if (a.startsWith('-')) flags.seen.push(a);
+    if (VALUE_FLAGS.has(a)) {
+      const v = rest[i + 1];
+      // A value flag must not swallow the next flag: `--config --json` means a forgotten path, not a
+      // config file literally named "--json". Do NOT consume the token in that case — otherwise a
+      // trailing --json would be lost and the resulting error printed as prose instead of JSON.
+      if (v === undefined || v.startsWith('-')) flags.missingValue.push(a);
+      else {
+        flags[VALUE_DEST[a]] = v;
+        i++;
+      }
+      continue;
+    }
     if (a === '--sensitive') flags.sensitive = true;
     else if (a === '--curate') flags.curate = true;
     else if (a === '--no-curate') flags.curate = false;
@@ -51,30 +87,88 @@ export function parseArgs(argv) {
     else if (a === '--force') flags.force = true;
     else if (a === '--sandbox') flags.sandbox = true;
     else if (a === '--interactive' || a === '-i') flags.interactive = true;
-    else if (a === '--task-id') flags.taskId = rest[++i];
-    else if (a === '--source-path') flags.sourcePath = rest[++i];
-    else if (a === '--config') flags.config = rest[++i];
     else if (a === '--help' || a === '-h') flags.help = true;
     else if (a === '--version' || a === '-v') flags.version = true;
+    else if (a.startsWith('-')) flags.unknown.push(a);
     else flags._.push(a);
   }
   return { command, flags };
 }
 
+// Reject anything the command does not implement. Returns a ConsultumError (USAGE, exit 10) or null;
+// it does not throw, so the caller decides how to render it (--json vs human).
+export function checkArgs(command, flags) {
+  const usage = (msg) => new ConsultumError(KIND.USAGE, msg);
+  if (flags.missingValue?.length) {
+    return usage(`${flags.missingValue[0]} requires a value`);
+  }
+  const known = COMMAND_FLAGS[command];
+  if (!known) return null; // unknown command — bin/ reports that separately, with the usage text
+  const allowed = new Set([...known, ...GLOBAL_FLAGS]);
+  // Check EVERY flag literal seen, not just the unrecognized ones: a real flag used on the wrong
+  // command (e.g. --panel on doctor) sets a flags.* field and never reaches `unknown`, but is still
+  // invalid here. `seen` captures both cases; fall back to `unknown` for older callers.
+  const bad = (flags.seen ?? flags.unknown ?? []).find((f) => !allowed.has(f));
+  if (bad) {
+    const verb = (flags.unknown ?? []).includes(bad) ? 'unknown flag' : 'flag not valid here';
+    return usage(`${verb} '${bad}' for 'consultum ${command}' (accepts: ${known.join(', ')})`);
+  }
+  // A stray positional usually means the question was passed as an argument. It is never read —
+  // the question arrives on STDIN, because argv is visible to other users via `ps`.
+  if (flags._?.length) {
+    const hint =
+      command === 'consult'
+        ? " — the question is read from STDIN, not argv (argv is visible in `ps`); pipe it in instead"
+        : '';
+    return usage(`unexpected argument '${flags._[0]}' for 'consultum ${command}'${hint}`);
+  }
+  return null;
+}
+
+// The only keys the JSON stdin protocol defines. An unknown key is rejected rather than dropped:
+// a caller sending {"sensitve": true} (or {"sensitive": true}, which is not the way to escalate —
+// use --sensitive) would otherwise get a NON-sensitive consult to an untrusted advisor and no
+// warning. Same fail-open class as an unknown CLI flag.
+const STDIN_JSON_KEYS = ['question', 'context', 'sourcePath'];
+
 export function parseStdin(raw) {
   const text = (raw ?? '').trim();
   if (!text) return { question: '', context: '', sourcePath: null };
   if (text.startsWith('{')) {
+    // Leading '{' means the caller INTENDED JSON. Falling back to line-based parsing here would
+    // silently turn a truncated packet into a plain-text question and bill a real provider call for
+    // it, so a parse failure is a usage error — raised before any money is spent.
+    let obj;
     try {
-      const obj = JSON.parse(text);
-      return {
-        question: String(obj.question ?? '').trim(),
-        context: String(obj.context ?? '').trim(),
-        sourcePath: obj.sourcePath ? String(obj.sourcePath) : null,
-      };
-    } catch {
-      // fall through to line-based parsing
+      obj = JSON.parse(text);
+    } catch (e) {
+      throw new ConsultumError(
+        KIND.USAGE,
+        `stdin looks like JSON (starts with '{') but is not valid JSON: ${e.message}. ` +
+          `Send {"question": "...", "context": "..."} or plain text (first line = question).`,
+      );
     }
+    if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+      throw new ConsultumError(KIND.USAGE, 'stdin JSON must be an object, e.g. {"question": "...", "context": "..."}');
+    }
+    const unknown = Object.keys(obj).find((k) => !STDIN_JSON_KEYS.includes(k));
+    if (unknown) {
+      const hint = /^sensit/i.test(unknown) ? ' — sensitivity is set with the --sensitive flag, not on stdin' : '';
+      throw new ConsultumError(
+        KIND.USAGE,
+        `stdin JSON has unknown key '${unknown}' (accepts: ${STDIN_JSON_KEYS.join(', ')})${hint}`,
+      );
+    }
+    // sourcePath drives per-path sensitivity, so it must be a real string — String({}) would become
+    // "[object Object]" and silently match nothing, quietly defeating a sensitive_paths rule.
+    if (obj.sourcePath !== undefined && obj.sourcePath !== null && typeof obj.sourcePath !== 'string') {
+      throw new ConsultumError(KIND.USAGE, 'stdin JSON "sourcePath" must be a string');
+    }
+    return {
+      question: String(obj.question ?? '').trim(),
+      context: String(obj.context ?? '').trim(),
+      sourcePath: obj.sourcePath ? String(obj.sourcePath) : null,
+    };
   }
   const nl = text.indexOf('\n');
   if (nl === -1) return { question: text, context: '', sourcePath: null };
@@ -161,7 +255,14 @@ export function formatHuman(rec) {
 // ---- commands --------------------------------------------------------------
 
 export async function runConsult({ stdin, flags, config, deps = defaultRuntime, out, err }) {
-  const { question, context, sourcePath: stdinSourcePath } = parseStdin(stdin);
+  let parsed;
+  try {
+    parsed = parseStdin(stdin);
+  } catch (e) {
+    // A malformed packet is rejected here, BEFORE any provider is contacted or billed.
+    return emitError(e, flags, err);
+  }
+  const { question, context, sourcePath: stdinSourcePath } = parsed;
   // --source-path (host-supplied) wins; a JSON stdin sourcePath is a fallback. Either way sensitivity
   // is escalate-only, so a caller-provided path can only ADD sensitivity, never relax it.
   const sourcePath = flags.sourcePath ?? stdinSourcePath ?? null;
@@ -176,14 +277,25 @@ export async function runConsult({ stdin, flags, config, deps = defaultRuntime, 
     return emitError(e, flags, err);
   }
 
-  // State for library-mode consult limits, only if --task-id is passed.
+  // State for library-mode consult limits, only if --task-id is passed. The read → budget-check →
+  // consult → record → write sequence runs under an exclusive lock so concurrent processes sharing a
+  // --task-id cannot both slip past the cap (see acquireStateLock). readState fails closed on a
+  // corrupt/unreadable file, so this can throw before consulting — which is correct: we will not spend
+  // against an unknown budget.
   let state = null;
   let statePath = null;
+  let releaseLock = null;
   if (flags.taskId) {
     // os.tmpdir() honors TMPDIR/TEMP/TMP per platform; the old `TMPDIR || '/tmp'` wrote to a
     // literal `\tmp` on Windows, where TMPDIR is not set.
     statePath = path.join(os.tmpdir(), `consultum-state-${sanitize(flags.taskId)}.json`);
-    state = readState(statePath);
+    try {
+      releaseLock = await acquireStateLock(statePath);
+      state = readState(statePath);
+    } catch (e) {
+      if (releaseLock) releaseLock();
+      return emitError(e, flags, err);
+    }
   }
 
   try {
@@ -199,12 +311,15 @@ export async function runConsult({ stdin, flags, config, deps = defaultRuntime, 
       taskId: flags.taskId ?? null,
       state,
     });
+    // consult() mutated `state` (recorded this consult) on success; persist it inside the lock.
     if (state && statePath) writeState(statePath, state);
     if (flags.json) out(JSON.stringify(rec, null, 2));
     else out(formatHuman(rec));
     return rec.lowConfidence ? EXIT.LOW_CONFIDENCE : EXIT.OK;
   } catch (e) {
     return emitError(e, flags, err);
+  } finally {
+    if (releaseLock) releaseLock();
   }
 }
 
@@ -304,7 +419,14 @@ export async function runInitInteractive({ flags, out, err, detect = defaultDete
   const addModel = async (key, label, provider, defaultId, trust, hint) => {
     const yes = await ask(`Configure ${label}? [Y/n] `);
     if (/^n/i.test(yes.trim())) return;
-    const id = (await ask(`  model id for ${label} [${defaultId}]: `)).trim() || defaultId;
+    // defaultId may be null (e.g. Codex, whose id is account-specific and not safe to guess) — then
+    // the id is required and a blank answer skips the model rather than writing an empty (invalid) id.
+    const idPrompt = defaultId ? `  model id for ${label} [${defaultId}]: ` : `  model id for ${label} (required, blank to skip): `;
+    const id = (await ask(idPrompt)).trim() || defaultId || '';
+    if (!id) {
+      err(`  no model id given — skipping ${label}.`);
+      return;
+    }
     const t = (await ask(`  trust for ${label} — local|trusted|untrusted [${trust}]: `)).trim() || trust;
     if (!TRUST_VALUES.includes(t)) {
       err(`  '${t}' is not a valid trust value; using '${trust}'.`);
@@ -315,7 +437,10 @@ export async function runInitInteractive({ flags, out, err, detect = defaultDete
   };
 
   if (detected.claude) await addModel('claude', 'Claude Code CLI', 'anthropic-cli', 'claude-opus-4-8', 'trusted', 'uses the CLI login');
-  if (detected.codex) await addModel('codex', 'Codex CLI', 'codex-cli', 'gpt-5-codex', 'untrusted', 'read-capable agent, NOT no-tools');
+  // Codex id is account-tier-specific (`gpt-5-codex`/`gpt-5` are rejected on ChatGPT accounts), so
+  // there is no safe literal to default to. Offer the model from ~/.codex/config.toml if we found one;
+  // otherwise addModel prompts for a required id (blank skips) rather than writing a broken default.
+  if (detected.codex) await addModel('codex', 'Codex CLI', 'codex-cli', detected.codexModel, 'untrusted', 'read-capable agent, NOT no-tools');
   if (detected.ollama) await addModel('local', 'Ollama (local)', 'ollama', detected.ollamaModel || 'llama3.1:8b', 'local', 'localhost, no key');
   if (!models.length) {
     out('Nothing detected — adding an Ollama entry you can edit.');
@@ -400,8 +525,15 @@ export function generateStarterConfig(detected, { sandbox = false } = {}) {
     advisor.push('claude');
   }
   if (detected.codex) {
-    models.push('  codex:  { provider: codex-cli,     id: gpt-5-codex,      trust: untrusted } # read-capable agent, NOT a no-tools advisor (docs/threat-model.md)');
-    advisor.push('codex');
+    if (detected.codexModel) {
+      // Scaffold the model the user's codex is actually configured with (the one `codex exec` uses).
+      models.push(`  codex:  { provider: codex-cli,     id: ${detected.codexModel}, trust: untrusted } # from ~/.codex/config.toml; read-capable agent, NOT a no-tools advisor (docs/threat-model.md)`);
+      advisor.push('codex');
+    } else {
+      // No model id in ~/.codex/config.toml and none is safe to hardcode (account-tier-specific).
+      // Leave it commented so init never scaffolds a known-broken advisor into the chain.
+      models.push('  # codex: { provider: codex-cli, id: <your-codex-model>, trust: untrusted } # set to a model your codex account supports (see `codex exec`); read-capable, NOT no-tools');
+    }
   }
   if (detected.ollama) {
     const id = detected.ollamaModel || 'llama3.1:8b';
@@ -453,7 +585,7 @@ function sandboxStarterConfig() {
 
 // ---- helpers ---------------------------------------------------------------
 
-function emitError(e, flags, err) {
+export function emitError(e, flags, err) {
   if (e instanceof ConsultumError) {
     if (flags.json) err(JSON.stringify(e.toJSON()));
     else err(`consultum: ${e.kind}: ${e.message}`);
@@ -545,7 +677,12 @@ async function httpAuthedStatus(model, base, envName, reachPath) {
   const reach = await httpReachable(base.replace(/\/$/, '') + reachPath);
   if (!reach.reachable) return { status: reach.status, detail: reach.detail };
   if (!credentialPresent(model, envName)) return { status: 'not-authed', detail: `${envName} not set and no api_key_file` };
-  return { status: 'ok', detail: 'reachable, credential present (not sent)' };
+  // Reachability + local credential PRESENCE is all we checked — the exact model id was never sent to
+  // the provider (doing so would require an authenticated call, which doctor deliberately avoids). So
+  // this is 'ok-unverified', not 'ok': a wrong or retired id (e.g. a typo'd `gpt-4o`) will fail at
+  // consult time, not here. PR #10 made this honesty fix for the CLI and Ollama adapters but missed
+  // the HTTP path (openai / anthropic-api / openai-compatible); this closes that gap.
+  return { status: 'ok-unverified', detail: 'reachable, credential present (not sent); model id not verified' };
 }
 
 // CLI adapters: on PATH? credential locally present? We cannot verify auth without running it, and we
@@ -591,38 +728,98 @@ function onPath(cmd) {
 // model-missing on the very first run. `--sandbox` must never make this network call (no egress there).
 async function defaultDetect({ sandbox = false } = {}) {
   const ollama = onPath('ollama');
+  const codex = onPath('codex');
   return {
     claude: onPath('claude'),
-    codex: onPath('codex'),
+    codex,
     ollama,
     ollamaModel: ollama && !sandbox ? await pickOllamaTag() : null,
+    // Codex model ids are account-tier-specific — `gpt-5-codex` / `gpt-5` are rejected on a ChatGPT
+    // account ("not supported when using Codex with a ChatGPT account"), so there is NO id that is
+    // valid to hardcode. Read the model the user has already configured and that `codex exec` uses.
+    codexModel: codex ? pickCodexModel() : null,
   };
 }
 
-// Picks the tag most likely to be a capable general-purpose local model: excludes `:cloud` tags
-// (those aren't "local" in the sense init cares about) and embedding models (useless as an advisor),
-// then takes the largest by size as a heuristic for capability. Never throws — a failed/timed-out
-// probe or an empty list just means the caller falls back to the placeholder id.
+// The model id from the user's codex config (`$CODEX_HOME/config.toml`, default `~/.codex/config.toml`),
+// i.e. the one `codex exec` runs with no `-m`. Returns null if unreadable or unset — the caller then
+// scaffolds codex commented-out rather than guessing a literal that may be invalid for the account.
+function pickCodexModel() {
+  const home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  try {
+    const toml = fs.readFileSync(path.join(home, 'config.toml'), 'utf8');
+    // Top-level `model = "..."`, not a `[section]` key. Match a bare (non-indented) assignment before
+    // the first table header so a `[profiles.x] model = ...` deeper in the file can't be misread.
+    for (const line of toml.split(/\r?\n/)) {
+      if (/^\s*\[/.test(line)) break; // reached the first [table] — stop scanning top-level keys
+      const m = line.match(/^\s*model\s*=\s*["']([^"']+)["']\s*(#.*)?$/);
+      if (m) return m[1];
+    }
+  } catch {
+    /* no config / unreadable — fall through to null */
+  }
+  return null;
+}
+
+// Domain-specialised model families that are poor general-purpose advisors even though they report a
+// plain `completion` capability (so the capability array alone can't reject them). Demoted, not
+// dropped — a domain model is still better than a placeholder the user definitely doesn't have.
+const DOMAIN_MODEL_RE = /^(medgemma|meditron|biomistral|codegemma|starcoder|sqlcoder|deepseek-coder|codellama)/i;
+
+// Score a candidate for general-advisor suitability. `tools` (instruction-tuned function-calling) is a
+// strong proxy for "general assistant"; vision-primary and domain models are ranked down but not
+// excluded, because modern flagship general models are increasingly multimodal (excluding vision would
+// reject genuinely good advisors). Size is the final tie-break, preserving the old "largest wins"
+// heuristic among otherwise-equal candidates. Ollama < 0.4-ish omits `capabilities`, so a missing
+// array scores 0 and the pick degrades gracefully to size order.
+function scoreOllamaTag(m) {
+  const name = String(m?.name || '');
+  const caps = Array.isArray(m?.capabilities) ? m.capabilities : [];
+  let score = 0;
+  if (caps.includes('tools')) score += 4;
+  if (caps.includes('thinking')) score += 2;
+  if (DOMAIN_MODEL_RE.test(name)) score -= 3;
+  // vision-capable but NOT a general text model (no tools) — likely a vision-primary model as advisor.
+  if (caps.includes('vision') && !caps.includes('tools')) score -= 1;
+  return score;
+}
+
+// Picks the tag most likely to be a capable general-purpose local model. `/api/tags` returns a
+// per-model `capabilities` array in the same request that proves reachability, so we filter on it for
+// free (no `/api/show` probe needed): drop `:cloud` tags (not "local" in the sense init cares about)
+// and embedding models (useless as an advisor), then rank the rest by general-advisor suitability,
+// size as the tie-break. INVARIANT: capability filtering only changes WHICH tag is picked — it must
+// never turn a non-empty tag list into a null (that would reintroduce the first-run `model-missing`
+// friction this detection exists to remove). Never throws — a failed/timed-out probe returns null and
+// the caller falls back to the placeholder id.
 async function pickOllamaTag(fetchImpl = fetch) {
   try {
     // Honour OLLAMA_HOST — a user who moved the daemon off the default port would otherwise get the
-    // placeholder id back and hit `model-missing` on their first `doctor`, which is the exact
-    // first-run friction this detection exists to remove.
+    // placeholder id back and hit `model-missing` on their first `doctor`.
     const host = (process.env.OLLAMA_HOST || 'http://localhost:11434').replace(/\/$/, '');
     const base = /^https?:\/\//.test(host) ? host : `http://${host}`;
     const res = await fetchImpl(`${base}/api/tags`, { signal: AbortSignal.timeout(2000) });
     if (!res.ok) return null;
     const data = await res.json();
     const models = Array.isArray(data?.models) ? data.models : [];
-    const candidates = models.filter((m) => {
+
+    // Hard rejects: never usable as a text advisor. Applied first; the fallback below degrades ONLY
+    // these, never the soft scoring, so a capable-but-unscored tag is always preferred over nothing.
+    const notLocalOrEmbedding = (m) => {
       const name = String(m?.name || '');
       if (!name) return false;
       if (/:cloud$/.test(name)) return false;
-      if (/^bge/i.test(name) || /embed/i.test(name)) return false;
+      const caps = Array.isArray(m?.capabilities) ? m.capabilities : [];
+      if (caps.includes('embedding')) return false; // authoritative when present
+      if (caps.length && !caps.includes('completion')) return false; // present but can't do text
+      if (/^bge/i.test(name) || /embed/i.test(name)) return false; // name fallback for daemons w/o caps
       return true;
-    });
+    };
+
+    const candidates = models.filter(notLocalOrEmbedding);
     if (!candidates.length) return null;
-    candidates.sort((a, b) => (Number(b?.size) || 0) - (Number(a?.size) || 0));
+    // Best general-advisor score wins; size breaks ties (stable-ish, deterministic).
+    candidates.sort((a, b) => scoreOllamaTag(b) - scoreOllamaTag(a) || (Number(b?.size) || 0) - (Number(a?.size) || 0));
     return candidates[0].name;
   } catch {
     return null;
@@ -633,23 +830,91 @@ function sanitize(s) {
   return String(s).replace(/[^A-Za-z0-9_.\-]/g, '_');
 }
 
+// The --task-id state file holds a COST control (how many consults a task has spent). A silent reset
+// of that budget is a real failure, so reads FAIL CLOSED: a missing file is a legitimate first
+// consult ({}), but a file that exists and is corrupt, non-object, or unreadable throws rather than
+// pretending the budget is fresh — which would let a garbled or tampered file grant unlimited paid
+// consults.
 function readState(p) {
+  let text;
   try {
-    return JSON.parse(fs.readFileSync(p, 'utf8'));
-  } catch {
-    return {};
+    text = fs.readFileSync(p, 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return {}; // no prior consults for this task — the normal first run
+    throw new ConsultumError(
+      KIND.USAGE,
+      `could not read consult-budget state ${p}: ${e.message}. Refusing to consult with an unknown budget; remove the file to reset, or fix its permissions.`,
+    );
   }
+  let obj;
+  try {
+    obj = JSON.parse(text);
+  } catch (e) {
+    throw new ConsultumError(
+      KIND.USAGE,
+      `consult-budget state ${p} is corrupt (${e.message}). Refusing to consult with an unknown budget; delete the file to reset it.`,
+    );
+  }
+  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+    throw new ConsultumError(KIND.USAGE, `consult-budget state ${p} is not a JSON object. Delete the file to reset it.`);
+  }
+  return obj;
 }
 
-// 0600: the state file records which consults a task has already spent. It lives in a shared temp
-// directory, so a world-readable/writable file lets any local user read a task's history or reset
-// (or exhaust) its consult budget — and that budget is a COST control.
+// Atomic write: a concurrent reader must never see a half-written file (which readState would now
+// reject as corrupt). Write a temp file in the same dir, then rename (atomic on POSIX and Windows).
+// 0600 because the file lives in a shared temp dir — a world-readable/writable budget file lets any
+// local user read a task's history or reset/exhaust its (cost-controlling) budget. THROWS on failure:
+// a swallowed write means the spend is never recorded and the next run gets a free slot — a silent
+// leak of the exact control this file exists to enforce.
 function writeState(p, state) {
-  try {
-    fs.writeFileSync(p, JSON.stringify(state), { encoding: 'utf8', mode: 0o600 });
-  } catch {
-    /* best-effort — a missing state file just resets the counter */
+  const tmp = `${p}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state), { encoding: 'utf8', mode: 0o600 });
+  fs.renameSync(tmp, p);
+}
+
+// A stale lock is broken after this long — a process that crashed mid-consult must not wedge a
+// task-id forever. Sized above the longest realistic consult (curator 90s + a slow advisor).
+const STATE_LOCK_STALE_MS = 5 * 60_000;
+const STATE_LOCK_RETRY_MS = 100;
+const STATE_LOCK_WAIT_MS = 6 * 60_000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Acquire an exclusive lock for a task-id's state file so the read → check-budget → reserve → write
+// sequence is atomic across concurrently-running consultum processes that share a --task-id. Without
+// it, two workers both read "2 of 3 spent", both proceed, and the cap is silently exceeded (and the
+// last writer clobbers the other's record). Held across the consult so the budget check and the spend
+// are one critical section; this serializes same-task-id consults, which is the correct behaviour for
+// a SHARED budget (workers wanting parallelism use distinct task-ids). Returns a release fn.
+async function acquireStateLock(statePath) {
+  const lockPath = `${statePath}.lock`;
+  const deadline = nowMs() + STATE_LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      const fd = fs.openSync(lockPath, 'wx'); // O_CREAT|O_EXCL — fails if the lock already exists
+      fs.closeSync(fd);
+      return () => { try { fs.unlinkSync(lockPath); } catch { /* already gone */ } };
+    } catch (e) {
+      if (!e || e.code !== 'EEXIST') throw e;
+      // Break a stale lock left by a crashed process.
+      try {
+        const age = nowMs() - fs.statSync(lockPath).mtimeMs;
+        if (age > STATE_LOCK_STALE_MS) { fs.unlinkSync(lockPath); continue; }
+      } catch { /* lock vanished between open and stat — just retry */ }
+      if (nowMs() >= deadline) {
+        throw new ConsultumError(KIND.USAGE, `timed out waiting for the consult-budget lock ${lockPath}. Another consult with the same --task-id may be running; retry, or remove a stale lock.`);
+      }
+      await sleep(STATE_LOCK_RETRY_MS);
+    }
   }
 }
 
-export { USAGE, cliStatus, ollamaStatus, isUsable, defaultDetect, pickOllamaTag };
+// Wall-clock helper. Date.now is avoided elsewhere in this codebase's workflow tooling, but here we
+// genuinely need real time for lock-staleness and a wait deadline; nothing depends on it being
+// deterministic.
+function nowMs() {
+  return Date.now();
+}
+
+export { USAGE, cliStatus, ollamaStatus, httpAuthedStatus, isUsable, defaultDetect, pickOllamaTag, pickCodexModel, readState, writeState, acquireStateLock };

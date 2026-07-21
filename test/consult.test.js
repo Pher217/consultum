@@ -174,7 +174,7 @@ policy:
   );
 });
 
-test('e2e: dedup guard rejects a near-identical re-consult', async () => {
+test('e2e: dedup guard rejects an identical re-consult', async () => {
   const cfg = parseConfig(`
 models:
   adv: { provider: ollama, id: adv-model, trust: trusted }
