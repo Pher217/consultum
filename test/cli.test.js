@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseArgs,
+  checkArgs,
   runInitInteractive,
   parseStdin,
   runConsult,
@@ -11,11 +12,18 @@ import {
   generateStarterConfig,
   cliStatus,
   ollamaStatus,
+  httpAuthedStatus,
   isUsable,
   defaultDetect,
   pickOllamaTag,
+  readState,
+  writeState,
+  acquireStateLock,
 } from '../src/cli.js';
 import { parseConfig } from '../src/config.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const REC = '## Recommended Approach\nDo the safe thing.\n## Confidence\n88';
 const LOWREC = '## Recommended Approach\nMaybe.\n## Confidence\n40';
@@ -124,6 +132,97 @@ test('runConsult: sensitive request with only untrusted advisor is refused (exit
   const code = await runConsult({ stdin: 'q\nc', flags: { sensitive: true }, config: cfg, deps: okDeps(), out: sink().fn, err: err.fn });
   assert.equal(code, 11);
   assert.match(err.text(), /refused-by-policy/);
+});
+
+// ---- unknown-flag / unknown-key rejection (fail-closed) --------------------
+
+test('parseArgs collects an unknown flag instead of swallowing it as a positional', () => {
+  // GIVEN a typo'd flag, WHEN parsing, THEN it lands in `unknown` (not `_`) so checkArgs can reject it.
+  const { flags } = parseArgs(['consult', '--sensitve']);
+  assert.deepEqual(flags.unknown, ['--sensitve']);
+  assert.deepEqual(flags._, []);
+});
+
+test('parseArgs does not let a value flag swallow a following flag', () => {
+  // GIVEN `--config` with no path before `--json`, WHEN parsing, THEN --config is flagged missing and
+  // --json is still parsed (so an error can still be emitted as JSON).
+  const { flags } = parseArgs(['consult', '--config', '--json']);
+  assert.deepEqual(flags.missingValue, ['--config']);
+  assert.equal(flags.json, true);
+  assert.equal(flags.config, undefined);
+});
+
+test('checkArgs rejects the --sensitve typo as a usage error (exit 10) — the security fail-open', () => {
+  // GIVEN a mistyped --sensitive, WHEN validating, THEN it is a USAGE error, NOT silently ignored —
+  // otherwise a request meant to be sensitive would go to an untrusted third-party advisor.
+  const { command, flags } = parseArgs(['consult', '--sensitve']);
+  const e = checkArgs(command, flags);
+  assert.equal(e?.kind, 'usage');
+  assert.equal(e?.exitCode, 10);
+  assert.match(e.message, /--sensitve/);
+});
+
+test('checkArgs rejects a flag valid for another command', () => {
+  // GIVEN --panel (a consult flag) passed to doctor, WHEN validating, THEN usage error.
+  const { command, flags } = parseArgs(['doctor', '--panel']);
+  const e = checkArgs(command, flags);
+  assert.equal(e?.exitCode, 10);
+  assert.match(e.message, /--panel/);
+});
+
+test('checkArgs rejects a missing flag value', () => {
+  const { command, flags } = parseArgs(['consult', '--task-id']);
+  const e = checkArgs(command, flags);
+  assert.equal(e?.exitCode, 10);
+  assert.match(e.message, /--task-id requires a value/);
+});
+
+test('checkArgs rejects a stray positional and points to stdin for consult', () => {
+  const { command, flags } = parseArgs(['consult', 'my question here']);
+  const e = checkArgs(command, flags);
+  assert.equal(e?.exitCode, 10);
+  assert.match(e.message, /STDIN/);
+});
+
+test('checkArgs accepts a valid flag set', () => {
+  const { command, flags } = parseArgs(['consult', '--sensitive', '--json', '--task-id', 'T1']);
+  assert.equal(checkArgs(command, flags), null);
+});
+
+// ---- malformed JSON stdin must be a usage error, NOT a paid provider call --
+
+test('parseStdin: malformed JSON (looks like JSON) throws USAGE, not a plain-text fallthrough', () => {
+  // GIVEN a truncated JSON packet, WHEN parsing stdin, THEN it is a usage error — previously it fell
+  // through to line-based parsing and billed a real provider call for the garbled text.
+  assert.throws(() => parseStdin('{"question": "unterminated'), (e) => e.kind === 'usage' && e.exitCode === 10);
+});
+
+test('parseStdin: JSON with an unknown key is rejected (no silent drop of e.g. sensitive)', () => {
+  assert.throws(() => parseStdin('{"question":"q","sensitve":true}'), (e) => e.kind === 'usage' && /sensit/.test(e.message));
+});
+
+test('parseStdin: a non-string sourcePath is rejected (never stringified to "[object Object]")', () => {
+  // GIVEN a JSON packet whose sourcePath is an object, WHEN parsing, THEN it is a usage error — not
+  // silently String()'d to "[object Object]", which would defeat a sensitive_paths rule. (review find)
+  assert.throws(() => parseStdin('{"question":"q","sourcePath":{}}'), (e) => e.kind === 'usage' && /sourcePath/.test(e.message));
+});
+
+test('parseStdin: only a leading { signals JSON — a leading [ is a plain-text question', () => {
+  // The protocol is: `{` = JSON packet, anything else = first line is the question. A question that
+  // happens to start with `[` must NOT be misread as a malformed JSON array and rejected.
+  assert.deepEqual(parseStdin('[urgent] why does it fail?'), { question: '[urgent] why does it fail?', context: '', sourcePath: null });
+});
+
+test('runConsult: malformed JSON stdin returns exit 10 BEFORE any provider call', async () => {
+  // GIVEN malformed JSON on stdin, WHEN consulting, THEN exit 10 (usage) and the provider deps are
+  // never invoked — no money is spent. Previously this exited 12 (a real, billed provider error).
+  let invoked = false;
+  const deps = { httpPostJson: async () => { invoked = true; return {}; }, runWithStdin: async () => { invoked = true; return { code: 0, stdout: REC, stderr: '', timedOut: false }; } };
+  const err = sink();
+  const code = await runConsult({ stdin: '{"question": "unterminated', flags: { json: true }, config: CFG, deps, out: sink().fn, err: err.fn });
+  assert.equal(code, 10);
+  assert.equal(invoked, false);
+  assert.equal(JSON.parse(err.text()).error.kind, 'usage');
 });
 
 test('runConsult: provider error returns exit 12, --json error shape', async () => {
@@ -279,6 +378,206 @@ test('pickOllamaTag returns null when the request fails or times out', async () 
   assert.equal(await pickOllamaTag(mockFetch), null);
 });
 
+test('pickOllamaTag rejects an embedding model by its capabilities array, not just its name', async () => {
+  // GIVEN an embedding model whose name has no embed/bge marker, WHEN picking, THEN capabilities
+  // reject it and a smaller general model wins.
+  const mockFetch = async () => ({
+    ok: true,
+    json: async () => ({
+      models: [
+        { name: 'mxbai:latest', size: 9000, capabilities: ['embedding'] },
+        { name: 'gemma3:4b', size: 3000, capabilities: ['completion'] },
+      ],
+    }),
+  });
+  assert.equal(await pickOllamaTag(mockFetch), 'gemma3:4b');
+});
+
+test('pickOllamaTag prefers a tools-capable general model over a larger vision or domain model', async () => {
+  // GIVEN a large vision model, a large domain model, and a smaller general tools model, WHEN picking,
+  // THEN the general tools model wins despite being smaller (capability score beats raw size).
+  const mockFetch = async () => ({
+    ok: true,
+    json: async () => ({
+      models: [
+        { name: 'qwen2.5vl:7b', size: 6000, capabilities: ['vision', 'completion'] },
+        { name: 'medgemma:27b', size: 17000, capabilities: ['completion'] },
+        { name: 'gemma4:31b-mlx', size: 5000, capabilities: ['completion', 'tools', 'thinking'] },
+      ],
+    }),
+  });
+  assert.equal(await pickOllamaTag(mockFetch), 'gemma4:31b-mlx');
+});
+
+test('pickOllamaTag falls back to size order when no model reports capabilities (older daemon)', async () => {
+  // GIVEN a daemon that omits `capabilities` (omitempty on older Ollama), WHEN picking, THEN the old
+  // largest-non-embedding heuristic still applies — capability filtering must never empty a good list.
+  const mockFetch = async () => ({
+    ok: true,
+    json: async () => ({
+      models: [
+        { name: 'gemma3:4b', size: 3000 },
+        { name: 'gemma4:31b-mlx', size: 18000 },
+      ],
+    }),
+  });
+  assert.equal(await pickOllamaTag(mockFetch), 'gemma4:31b-mlx');
+});
+
+test('pickCodexModel reads the top-level model from $CODEX_HOME/config.toml and ignores table keys', async () => {
+  // GIVEN a codex config with a top-level model and a later [profiles.x] model, WHEN reading, THEN the
+  // top-level model is returned (never a broken hardcoded default) and the table key is not misread.
+  const { pickCodexModel } = await import('../src/cli.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codexhome-'));
+  fs.writeFileSync(path.join(dir, 'config.toml'), 'model = "my-account-model"\n[profiles.other]\nmodel = "should-not-win"\n');
+  const prev = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = dir;
+  try {
+    assert.equal(pickCodexModel(), 'my-account-model');
+  } finally {
+    if (prev === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = prev;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('pickCodexModel returns null when config.toml is absent (so init scaffolds codex commented-out)', async () => {
+  const { pickCodexModel } = await import('../src/cli.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codexhome-empty-'));
+  const prev = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = dir;
+  try {
+    assert.equal(pickCodexModel(), null);
+  } finally {
+    if (prev === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = prev;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- doctor honesty: HTTP adapters report ok-unverified (blocker 2) --------
+
+test('httpAuthedStatus reports ok-unverified (reachable + credential present, model id NOT verified)', async () => {
+  // GIVEN a reachable HTTP provider with the credential env set, WHEN probing, THEN the status is
+  // ok-unverified — the model id was never sent to the provider, so a wrong id fails at consult time,
+  // not here. PR #10 fixed this for CLI/Ollama but missed the HTTP adapters.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200 });
+  process.env.__TEST_KEY = 'x';
+  try {
+    const s = await httpAuthedStatus({ apiKeyEnv: '__TEST_KEY' }, 'https://api.example.com', '__TEST_KEY', '/v1/models');
+    assert.equal(s.status, 'ok-unverified');
+    assert.match(s.detail, /not verified/i);
+    assert.equal(isUsable(s.status), true);
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.__TEST_KEY;
+  }
+});
+
+test('httpAuthedStatus still reports not-authed when no credential is present', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200 });
+  try {
+    const s = await httpAuthedStatus({ apiKeyEnv: '__NOPE_KEY' }, 'https://api.example.com', '__NOPE_KEY', '/v1/models');
+    assert.equal(s.status, 'not-authed');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// ---- --task-id state file: a COST control, must fail closed & atomic -------
+
+function tmpStatePath(tag) {
+  return path.join(os.tmpdir(), `consultum-test-state-${tag}-${process.pid}.json`);
+}
+
+test('readState: a missing file is a fresh budget ({}) — the normal first consult', () => {
+  const p = tmpStatePath('missing');
+  try { fs.unlinkSync(p); } catch { /* ok */ }
+  assert.deepEqual(readState(p), {});
+});
+
+test('readState: a CORRUPT file fails closed (throws) instead of silently resetting the budget', () => {
+  // GIVEN a garbled state file, WHEN reading, THEN it throws rather than returning {} — a silent reset
+  // would grant an unlimited fresh consult budget (a cost control) on a tampered/corrupt file.
+  const p = tmpStatePath('corrupt');
+  fs.writeFileSync(p, 'not json at all');
+  try {
+    assert.throws(() => readState(p), (e) => e.kind === 'usage' && /corrupt/i.test(e.message));
+  } finally {
+    fs.unlinkSync(p);
+  }
+});
+
+test('readState: a non-object JSON (array/scalar) is rejected', () => {
+  const p = tmpStatePath('nonobj');
+  fs.writeFileSync(p, '[1,2,3]');
+  try {
+    assert.throws(() => readState(p), (e) => e.kind === 'usage');
+  } finally {
+    fs.unlinkSync(p);
+  }
+});
+
+test('writeState round-trips through readState and writes 0600, atomically', () => {
+  const p = tmpStatePath('roundtrip');
+  try {
+    writeState(p, { T1: ['abc'] });
+    assert.deepEqual(readState(p), { T1: ['abc'] });
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(p).mode & 0o777, 0o600);
+    }
+    // no leftover temp file
+    assert.equal(fs.existsSync(`${p}.${process.pid}.tmp`), false);
+  } finally {
+    try { fs.unlinkSync(p); } catch { /* ok */ }
+  }
+});
+
+test('acquireStateLock is exclusive: a second acquire waits until the first releases', async () => {
+  // GIVEN one holder, WHEN a second acquire is attempted, THEN it does not resolve until release —
+  // this exclusivity is what makes the concurrent budget check-and-reserve atomic.
+  const p = tmpStatePath('lock');
+  try { fs.unlinkSync(`${p}.lock`); } catch { /* ok */ }
+  const release1 = await acquireStateLock(p);
+  let secondAcquired = false;
+  const second = acquireStateLock(p).then((r) => { secondAcquired = true; return r; });
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(secondAcquired, false, 'second acquire must block while the lock is held');
+  release1();
+  const release2 = await second;
+  assert.equal(secondAcquired, true);
+  release2();
+  assert.equal(fs.existsSync(`${p}.lock`), false);
+});
+
+test('runConsult with --task-id enforces max_consults_per_task across persisted state (exit 13)', async () => {
+  // GIVEN a task at its consult cap in the persisted state file, WHEN consulting again with the same
+  // --task-id, THEN it is refused (limit-exceeded, exit 13) — the file-backed budget is honoured.
+  const taskId = `captest-${process.pid}`;
+  const statePath = path.join(os.tmpdir(), `consultum-state-${taskId}.json`);
+  const cfg = parseConfig(`
+models:
+  adv: { provider: ollama, id: adv-model, trust: trusted }
+roles:
+  advisor: [adv]
+policy:
+  default_sensitive: false
+  max_consults_per_task: 1
+`);
+  try { fs.unlinkSync(statePath); } catch { /* ok */ }
+  try {
+    const first = await runConsult({ stdin: 'q1\nc1', flags: { taskId }, config: cfg, deps: okDeps(), out: sink().fn, err: sink().fn });
+    assert.equal(first, 0);
+    const err = sink();
+    const second = await runConsult({ stdin: 'q2\nc2', flags: { taskId }, config: cfg, deps: okDeps(), out: sink().fn, err: err.fn });
+    assert.equal(second, 13);
+    assert.match(err.text(), /limit-exceeded|max_consults_per_task/);
+  } finally {
+    try { fs.unlinkSync(statePath); } catch { /* ok */ }
+    try { fs.unlinkSync(`${statePath}.lock`); } catch { /* ok */ }
+  }
+});
+
 test('defaultDetect --sandbox never makes the ollama network probe', async () => {
   const realFetch = globalThis.fetch;
   let called = false;
@@ -318,11 +617,24 @@ test('runInit --sandbox --print includes the config-outside-workspace guidance p
 });
 
 test('generateStarterConfig builds an ordered advisor chain from detected providers', () => {
-  const all = generateStarterConfig({ claude: true, codex: true, ollama: true });
+  // GIVEN codex is detected WITH a known model id (from ~/.codex/config.toml), WHEN scaffolding,
+  // THEN codex is an active advisor using that id.
+  const all = generateStarterConfig({ claude: true, codex: true, codexModel: 'gpt-5.6-sol', ollama: true });
   assert.match(all, /advisor: \[claude, codex\]/);
+  assert.match(all, /id: gpt-5\.6-sol/);
   assert.match(all, /provider: anthropic-cli/);
   const none = generateStarterConfig({ claude: false, codex: false, ollama: false });
   assert.match(none, /advisor: \[local\]/);
+});
+
+test('generateStarterConfig comments codex OUT when no account model id is known (never scaffolds a broken default)', () => {
+  // GIVEN codex is on PATH but no model id was found in ~/.codex/config.toml, WHEN scaffolding,
+  // THEN codex is left commented (not an active advisor) and no `gpt-5-codex` literal is emitted,
+  // because that id is rejected on a ChatGPT account and would fail at consult time.
+  const cfg = generateStarterConfig({ claude: true, codex: true, ollama: false });
+  assert.doesNotMatch(cfg, /gpt-5-codex/);
+  assert.match(cfg, /# codex: \{ provider: codex-cli/);
+  assert.match(cfg, /advisor: \[claude\]/);
 });
 
 test('runInit uses the real provider detector without crashing (regression: probeOnPath rename)', async () => {

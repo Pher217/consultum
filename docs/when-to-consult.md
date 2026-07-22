@@ -34,8 +34,12 @@ policy:
   min_attempts_before_debug_consult: 2
 ```
 
-`consultum` also refuses a **near-identical re-consult** — each new call must add new evidence (a new test
-result, a new error, a repo discovery, a failed attempt, or a clarified requirement).
+`consultum` also refuses a **byte-identical re-consult** (same question + context, after redaction and
+whitespace trimming) under a shared `--task-id`. This is an exact-content guard, not a fuzzy or
+semantic one: a reworded or expanded packet is allowed through, so *adding genuine new evidence* (a new
+test result, a new error, a repo discovery, a failed attempt, or a clarified requirement) rather than
+merely rephrasing is a discipline the executor maintains — consultum enforces only the exact-duplicate
+floor.
 
 ## The packet (what you send)
 

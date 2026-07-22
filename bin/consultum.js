@@ -4,7 +4,8 @@
 
 import { readFileSync } from 'fs';
 import { createInterface } from 'node:readline/promises';
-import { parseArgs, runConsult, runConfig, runDoctor, runInit, runInitInteractive, USAGE } from '../src/cli.js';
+import { parseArgs, checkArgs, emitError, runConsult, runConfig, runDoctor, runInit, runInitInteractive, USAGE } from '../src/cli.js';
+import { ConsultumError, KIND } from '../src/errors.js';
 
 const out = (s) => process.stdout.write(`${s}\n`);
 const err = (s) => process.stderr.write(`${s}\n`);
@@ -22,6 +23,10 @@ function version() {
 // the lot and then ship it to a paid provider. Cap it, and say so rather than truncating silently.
 const MAX_STDIN_BYTES = 1024 * 1024;
 
+// Commands that accept flags. An input that is not one of these is an unknown command (handled with
+// the usage text in main's default case), NOT a flag-validation target.
+const COMMANDS = new Set(['consult', 'init', 'doctor', 'config']);
+
 async function readStdin() {
   if (process.stdin.isTTY) return '';
   const chunks = [];
@@ -29,7 +34,10 @@ async function readStdin() {
   for await (const chunk of process.stdin) {
     total += chunk.length;
     if (total > MAX_STDIN_BYTES) {
-      throw new Error(
+      // A USAGE error (exit 10), not a bare Error — otherwise this escapes to main().catch and exits
+      // 1 with prose, breaking the documented exit-code contract AND ignoring --json.
+      throw new ConsultumError(
+        KIND.USAGE,
         `input exceeds ${MAX_STDIN_BYTES / 1024} KB. Send the relevant excerpt, not the whole file — ` +
           'a bigger packet costs more and advises worse.',
       );
@@ -53,9 +61,26 @@ async function main() {
     return;
   }
 
+  // Reject unknown/misused flags for a known command before doing any work (this is where a typo'd
+  // --sensitve is caught). An unknown COMMAND falls through to the default case below with the usage.
+  if (COMMANDS.has(command)) {
+    const argErr = checkArgs(command, flags);
+    if (argErr) {
+      process.exitCode = emitError(argErr, flags, err);
+      return;
+    }
+  }
+
   switch (command) {
     case 'consult': {
-      const stdin = await readStdin();
+      let stdin;
+      try {
+        stdin = await readStdin();
+      } catch (e) {
+        // Oversized stdin (or any read failure) — honour --json and the exit-code contract.
+        process.exitCode = emitError(e, flags, err);
+        return;
+      }
       process.exitCode = await runConsult({ stdin, flags, out, err });
       return;
     }

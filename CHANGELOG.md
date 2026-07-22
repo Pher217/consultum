@@ -37,6 +37,15 @@ worker gets stuck, it escalates a curated, secret-redacted problem to a stronger
 - Published TypeScript declarations (`types/index.d.ts`).
 - Machine-readable exit codes, token/cost provenance, Windows support matrix.
 
+### Fixed (pre-publish hardening)
+- Unknown CLI flags, unknown JSON-stdin keys, and unknown config keys (top-level, `policy`, `roles`, and per-model) are now rejected as usage errors (exit 10) instead of being silently ignored — a typo like `--sensitve` previously proceeded as a normal non-sensitive consult.
+- `doctor` now reports `ok-unverified` (not a bare `ok`) for the HTTP adapters (`openai` / `anthropic-api` / `openai-compatible`) — reachability and credential presence are checked, but the model id is not verified.
+- Malformed JSON on stdin is now a usage error (exit 10) raised before any provider call, instead of being silently treated as a plain-text question and billed.
+- Oversized stdin (>1 MB) now exits `10` (usage) and honours `--json`, instead of exiting `1` with a plain-text message outside the documented exit-code contract.
+- `init` no longer scaffolds an invalid hardcoded model id: the Codex entry uses the model from `~/.codex/config.toml` (or is left commented when unknown), and `config.example.yaml` ships the correct `claude-opus-4-8` id.
+- `init` picks a genuinely general-purpose local Ollama tag using the `/api/tags` capabilities array (skips embedding models, ranks down vision-only and domain-specific models) instead of just the largest tag.
+- `--task-id` consult-budget state is now read fail-closed (a corrupt file errors instead of silently resetting the budget), written atomically, and guarded by a lock so concurrent workers sharing a task id cannot exceed the cap.
+
 ### Limits
 - Input is capped at 1 MB (stdin) and subprocess output at 4 MB; a panel is capped at 5 members.
   consultum spends real money on hosted providers, so unbounded input and unbounded fan-out are both

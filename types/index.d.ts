@@ -28,13 +28,67 @@ export interface ModelSpec {
 export interface ConsultumConfig {
   path?: string | null;
   models: Record<string, ModelSpec>;
-  roles: { advisor: string[]; curator?: string };
+  roles: { advisor: string[]; curator: string | null; panel: string[]; reconciler: string | null };
   policy: Record<string, unknown>;
 }
 
 export interface Usage {
   promptTokens: number | null;
   completionTokens: number | null;
+}
+
+/** One panelist's independent view (spec §8). */
+export interface PanelView {
+  model: string;
+  provider: ProviderName;
+  name: string;
+  recommendation: string;
+  confidence: number;
+  risks: string | null;
+  warnings: string[];
+  usage: Usage | null;
+}
+
+/** The reconciler's synthesis over the panel (and the primary advisor) — present only when agreement is 'reconciled'. */
+export interface PanelReconciliation {
+  recommendation: string;
+  dissent: string | null;
+  risks: string | null;
+  confidence: number;
+  warnings: string[];
+}
+
+/**
+ * Exactly five states, never conflated:
+ *   'not-convened'                    - no panel was convened (not requested, or no eligible panelist)
+ *   'unassessed'                      - convened, but no reconciler configured — raw views stand
+ *   'reconciled'                      - a reconciler actually synthesized the views
+ *   'reconciler-failed'               - a reconciler was configured but its pass failed
+ *   'reconciler-excluded-sensitive'   - a reconciler is configured but trust policy dropped it
+ */
+export type PanelAgreement =
+  | 'not-convened'
+  | 'unassessed'
+  | 'reconciled'
+  | 'reconciler-failed'
+  | 'reconciler-excluded-sensitive';
+
+export interface PanelResult {
+  convened: boolean;
+  trigger: 'requested' | 'low-confidence';
+  /** Explains why no panel was convened / why it produced nothing. Present only on some convened:false branches. */
+  reason?: string;
+  views: PanelView[];
+  failures: string[];
+  agreement: PanelAgreement;
+  reconciliation: PanelReconciliation | null;
+  reconciledBy: string | null;
+  /** Model ids the reconciler actually weighed (primary first, then panelists). Only set when agreement is 'reconciled'. */
+  reconciledOver?: string[] | null;
+  reconcilerError: string | null;
+  correlation: string | null;
+  /** Per-panelist usage, plus the reconciler's usage when reconciled. Not present on every convened:false branch. */
+  usage?: (Usage | null)[];
 }
 
 export interface Provenance {
@@ -74,6 +128,8 @@ export interface StructuredRecommendation {
   confidence: number;
   lowConfidence: boolean;
   warnings: string[];
+  /** null when no panel was convened. */
+  panel: PanelResult | null;
   provenance: Provenance;
 }
 
@@ -84,6 +140,11 @@ export interface ConsultOptions {
   sensitive?: boolean;
   /** Override `policy.curate`. */
   curate?: boolean;
+  /**
+   * Force a panel (spec §8). HOST-controlled: a panel costs one paid call per panelist, so a
+   * tool-loop worker must never be able to trigger that spend itself — see `consultumTool`.
+   */
+  panel?: boolean;
   /** Host-supplied path used for per-path sensitivity rules. Not worker-controlled. */
   sourcePath?: string | null;
   config?: ConsultumConfig;
@@ -129,7 +190,15 @@ export function redactSecrets(text: string): string;
 /** JSON Schema for the tool-loop shim's `consult` tool. */
 export const TOOL_SCHEMA: Record<string, unknown>;
 
+/**
+ * args are model-facing (whatever the weak worker sends): `packet` is the field TOOL_SCHEMA
+ * actually requires; `context` is accepted as a legacy alias. opts are host-controlled and never
+ * settable by the worker (e.g. `panel`, `config`, `sourcePath`).
+ */
 export function consultumTool(
-  args: { question: string; context?: string },
+  args: { question: string; packet?: string; context?: string; sensitive?: boolean },
   opts?: Omit<ConsultOptions, 'question' | 'context'>,
-): Promise<{ ok: true; recommendation: StructuredRecommendation } | { ok: false; error: string }>;
+): Promise<
+  | ({ ok: true } & StructuredRecommendation)
+  | { ok: false; error: { kind: ErrorKind; message: string } }
+>;

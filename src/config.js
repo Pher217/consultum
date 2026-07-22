@@ -75,7 +75,41 @@ export function parseConfig(text, filename = '<config>') {
   return normalizeConfig(raw, filename);
 }
 
+// Top-level and per-model-spec keys are validated strictly: an unrecognized key is almost always a
+// typo, and silently ignoring it can leave a security-relevant setting (e.g. a mistyped policy key)
+// at its default instead of erroring — a fail-open. See KNOWN_MODEL_KEYS below for the model-spec list.
+const KNOWN_TOP_LEVEL_KEYS = new Set(['models', 'roles', 'policy']);
+const KNOWN_ROLE_KEYS = new Set(['advisor', 'curator', 'panel', 'reconciler']);
+const KNOWN_MODEL_KEYS = new Set([
+  'provider',
+  'id',
+  'trust',
+  'base_url',
+  'baseUrl',
+  'api_key_env',
+  'apiKeyEnv',
+  'api_key_file',
+  'apiKeyFile',
+  'token_env',
+  'tokenEnv',
+  'token_file',
+  'tokenFile',
+  'timeout_ms',
+  'timeoutMs',
+  'tools',
+]);
+// Snake_case-only for error messages — keeps the "known keys" list readable while still accepting camelCase.
+const KNOWN_MODEL_KEYS_SNAKE = ['provider', 'id', 'trust', 'base_url', 'api_key_env', 'api_key_file', 'token_env', 'token_file', 'timeout_ms', 'tools'];
+
 function normalizeConfig(raw, filename) {
+  for (const key of Object.keys(raw)) {
+    if (!KNOWN_TOP_LEVEL_KEYS.has(key)) {
+      throw new ConsultumError(
+        KIND.USAGE,
+        `config ${filename}: unknown top-level key '${key}' (known: ${[...KNOWN_TOP_LEVEL_KEYS].join(', ')})`,
+      );
+    }
+  }
   const models = {};
   if (!raw.models || typeof raw.models !== 'object' || Array.isArray(raw.models)) {
     throw new ConsultumError(KIND.USAGE, `config ${filename}: 'models' mapping is required`);
@@ -83,6 +117,14 @@ function normalizeConfig(raw, filename) {
   for (const [name, spec] of Object.entries(raw.models)) {
     if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
       throw new ConsultumError(KIND.USAGE, `config ${filename}: model '${name}' must be a mapping`);
+    }
+    for (const key of Object.keys(spec)) {
+      if (!KNOWN_MODEL_KEYS.has(key)) {
+        throw new ConsultumError(
+          KIND.USAGE,
+          `config ${filename}: model '${name}' has unknown key '${key}' (known: ${KNOWN_MODEL_KEYS_SNAKE.join(', ')})`,
+        );
+      }
     }
     if (!KNOWN_PROVIDERS.has(spec.provider)) {
       throw new ConsultumError(
@@ -118,6 +160,14 @@ function normalizeConfig(raw, filename) {
   }
 
   const roles = raw.roles && typeof raw.roles === 'object' ? raw.roles : {};
+  for (const key of Object.keys(roles)) {
+    if (!KNOWN_ROLE_KEYS.has(key)) {
+      throw new ConsultumError(
+        KIND.USAGE,
+        `config ${filename}: unknown roles key '${key}' (known: ${[...KNOWN_ROLE_KEYS].join(', ')})`,
+      );
+    }
+  }
   // advisor: string | string[] -> ordered array of model names (the fallback chain).
   const advisorNames = toNameArray(roles.advisor);
   if (advisorNames.length === 0) {
@@ -164,8 +214,17 @@ function normalizeConfig(raw, filename) {
     if (typeof raw.policy !== 'object' || raw.policy === null || Array.isArray(raw.policy)) {
       throw new ConsultumError(KIND.USAGE, `config ${filename}: 'policy' must be a mapping`);
     }
-    for (const key of Object.keys(POLICY_DEFAULTS)) {
-      if (raw.policy[key] !== undefined) policy[key] = validatePolicyValue(key, raw.policy[key], filename);
+    for (const key of Object.keys(raw.policy)) {
+      // Object.hasOwn, NOT `key in POLICY_DEFAULTS`: `in` walks the prototype chain, so keys like
+      // `toString`/`constructor`/`valueOf` would pass as "known" and then crash validatePolicyValue
+      // (a config could turn a clean usage error into an uncaught TypeError). Own-keys only.
+      if (!Object.hasOwn(POLICY_DEFAULTS, key)) {
+        throw new ConsultumError(
+          KIND.USAGE,
+          `config ${filename}: unknown policy key '${key}' (known: ${Object.keys(POLICY_DEFAULTS).join(', ')})`,
+        );
+      }
+      policy[key] = validatePolicyValue(key, raw.policy[key], filename);
     }
   }
 
@@ -190,7 +249,7 @@ function validatePolicyValue(key, value, filename) {
     }
     return value;
   }
-  if (key in INT_POLICY) {
+  if (Object.hasOwn(INT_POLICY, key)) {
     if (typeof value !== 'number' || !Number.isInteger(value)) {
       throw new ConsultumError(KIND.USAGE, `config ${filename}: policy.${key} must be an integer, got ${JSON.stringify(value)}`);
     }
@@ -217,6 +276,14 @@ function normalizeTools(tools, name, filename) {
   if (tools === undefined || tools === null) return null;
   if (typeof tools !== 'object' || Array.isArray(tools)) {
     throw new ConsultumError(KIND.USAGE, `config ${filename}: model '${name}' tools must be a mapping { allow: [...], dirs: [...] }`);
+  }
+  for (const key of Object.keys(tools)) {
+    if (key !== 'allow' && key !== 'dirs') {
+      throw new ConsultumError(
+        KIND.USAGE,
+        `config ${filename}: model '${name}' tools has unknown key '${key}' (known: allow, dirs)`,
+      );
+    }
   }
   const allow = Array.isArray(tools.allow) ? tools.allow.map(String) : [];
   const dirs = Array.isArray(tools.dirs) ? tools.dirs.map(String) : [];
