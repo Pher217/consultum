@@ -17,7 +17,7 @@
     "test": "npm run typecheck && node --test",
     "lint": "node scripts/lint.mjs",
     "typecheck": "tsc --noEmit --strict -p typecheck/tsconfig.json",
-    "test:contract": "CONSULTUM_RUN_CONTRACT=1 node --test test/contract/pack-contract.mjs",
+    "test:contract": "node scripts/run-contract.mjs",
     "prepublishOnly": "npm test && npm run test:contract"
   },
   "keywords": ["llm", "advisory", "escalation", "multi-model", "orchestration", "ollama", "codex", "anthropic", "ai-agents", "read-only-advisor"],

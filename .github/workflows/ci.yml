@@ -26,4 +26,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      # The packed-tarball contract suite drives the installed binary + tsc through Unix-oriented
+      # spawn/paths; run it on Linux + macOS. Windows cross-platform coverage comes from `npm test`
+      # (unit + typecheck) above, which runs on every matrix combo.
       - run: npm run test:contract
+        if: runner.os != 'Windows'
