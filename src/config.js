@@ -197,7 +197,7 @@ function normalizeConfig(raw, filename) {
   for (const n of advisorNames) {
     if (!models[n]) throw new ConsultumError(KIND.USAGE, `config ${filename}: roles.advisor references unknown model '${n}'`);
   }
-  // panel: optional ordered list of models convened for a second opinion (v0.2). Ideally from
+  // panel: optional ordered list of models convened for a second opinion. Ideally from
   // DIFFERENT provider families — a panel of one family gives correlated answers, which is the
   // opposite of the point. consult() warns when it detects a single-provider panel.
   const panelNames = toNameArray(roles.panel);

@@ -1,5 +1,6 @@
-// The escalation ladder for v0.1 is an ORDERED AVAILABILITY FALLBACK CHAIN (not a panel — panels are
-// v0.2). Try each advisor in order; a provider that errors or stalls falls through to the next. For a
+// The escalation ladder is an ORDERED AVAILABILITY FALLBACK CHAIN (distinct from the panel, which
+// convenes multiple advisors). Try each advisor in order; a provider that errors or stalls falls
+// through to the next. For a
 // reachable advisor whose output does not meet the parse contract, retry ONCE with a corrective nudge,
 // then treat it as failed and fall through. This ports the Codex "fail-fast-on-stall, then fall back"
 // guardrail into the adapter contract.

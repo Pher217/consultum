@@ -69,7 +69,7 @@ policy:
 `trust: local | trusted | untrusted` is user-assigned and provider-neutral. Sensitive ⇒ `local`+`trusted` only.
 Valid `provider` values: `anthropic-cli`, `anthropic-api`, `openai`, `openai-compatible`, `ollama`, `codex-cli`.
 
-## Provider adapters (v0.1 ships four)
+## Provider adapters (v0.1 ships six)
 
 | Adapter | Auth | Read-only invocation |
 |---|---|---|

@@ -4,6 +4,7 @@
 // when the model calls `consult_advisor`, run consultumTool() and return the JSON result as the tool
 // message. This is a sketch to adapt — not executed by the test suite.
 
+// Requires the openai package: npm install openai
 import OpenAI from 'openai'; // your existing client
 import { consultumTool, TOOL_SCHEMA } from 'consultum'; // or: '../../src/index.js' from within this repo
 
