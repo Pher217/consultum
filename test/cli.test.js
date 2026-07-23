@@ -686,9 +686,11 @@ test('runInit --sandbox writes OUTSIDE the workspace (XDG), not ./consultum.yaml
       cwd: '/work',
     });
     assert.equal(code, 0);
-    assert.match(written, /\/tmp\/consultum-xdgtest\/consultum\/config\.yaml$/);
-    assert.doesNotMatch(written, /\/work\//);
-    assert.match(mkdirp, /\/tmp\/consultum-xdgtest\/consultum$/);
+    // Normalize separators: path.join uses `\` on Windows, so match on a canonical `/` form.
+    const norm = (p) => String(p).replace(/\\/g, '/');
+    assert.match(norm(written), /\/tmp\/consultum-xdgtest\/consultum\/config\.yaml$/);
+    assert.doesNotMatch(norm(written), /\/work\//);
+    assert.match(norm(mkdirp), /\/tmp\/consultum-xdgtest\/consultum$/);
   } finally {
     if (prev === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = prev;
