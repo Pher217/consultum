@@ -29,7 +29,8 @@ export function create(model, deps) {
           timeoutMs,
         });
       } catch (err) {
-        throw new ConsultumError(KIND.PROVIDER_ERROR, `anthropic-api (${model.id}) failed: ${redactSecrets(err.message)}`, { cause: err });
+        // Redact the cause too — whole-error logging would otherwise surface the raw provider error.
+        throw new ConsultumError(KIND.PROVIDER_ERROR, `anthropic-api (${model.id}) failed: ${redactSecrets(err.message)}`, { cause: new Error(redactSecrets(String((err && err.message) || err))) });
       }
       const text = (data?.content?.map((b) => b.text || '').join('') || '').trim();
       if (!text) throw new ConsultumError(KIND.PROVIDER_ERROR, `anthropic-api (${model.id}) returned no content`);

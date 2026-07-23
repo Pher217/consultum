@@ -216,3 +216,21 @@ test('anthropic-api: request-shaped messages call with x-api-key, text from cont
 test('createProvider throws USAGE for an unknown provider', () => {
   assert.throws(() => createProvider(model({ provider: 'nope' })), (e) => e.kind === 'usage');
 });
+
+test('openai: a provider error redacts the secret in BOTH the message and the .cause', async () => {
+  // GIVEN the raw provider error carries a key, WHEN invoke() fails, THEN neither the public message
+  // NOR err.cause leaks it — whole-error logging (which surfaces .cause) must not reveal the secret.
+  process.env.OPENAI_API_KEY = 'safe';
+  const deps = fakeDeps({ http: () => { throw new Error('upstream OPENAI_API_KEY=sk-raw-secret-1234567890 refused'); } });
+  const p = createProvider(model({ provider: 'openai', id: 'gpt-x', trust: 'untrusted', apiKeyEnv: 'OPENAI_API_KEY' }), deps);
+  await assert.rejects(
+    () => p.invoke('q'),
+    (e) => {
+      assert.doesNotMatch(e.message, /sk-raw-secret/);
+      assert.ok(e.cause, 'a cause should still be attached for debugging');
+      assert.doesNotMatch(String(e.cause.message), /sk-raw-secret/);
+      return true;
+    },
+  );
+  delete process.env.OPENAI_API_KEY;
+});

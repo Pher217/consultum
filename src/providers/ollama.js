@@ -20,7 +20,8 @@ export function create(model, deps) {
       try {
         data = await deps.httpPostJson(`${base}/api/chat`, { model: model.id, messages, stream: false }, { timeoutMs });
       } catch (err) {
-        throw new ConsultumError(KIND.PROVIDER_ERROR, `ollama (${model.id}) failed: ${redactSecrets(err.message)}`, { cause: err });
+        // Redact the cause too — whole-error logging would otherwise surface the raw provider error.
+        throw new ConsultumError(KIND.PROVIDER_ERROR, `ollama (${model.id}) failed: ${redactSecrets(err.message)}`, { cause: new Error(redactSecrets(String((err && err.message) || err))) });
       }
       const text = (data?.message?.content || '').trim();
       if (!text) throw new ConsultumError(KIND.PROVIDER_ERROR, `ollama (${model.id}) returned no content`);

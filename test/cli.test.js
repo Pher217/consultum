@@ -550,6 +550,22 @@ test('acquireStateLock is exclusive: a second acquire waits until the first rele
   assert.equal(fs.existsSync(`${p}.lock`), false);
 });
 
+test('acquireStateLock release() does NOT delete a lock another owner acquired after a stale-break', async () => {
+  // GIVEN we hold the lock, WHEN another process replaces the lock file with ITS own token (simulating
+  // a stale-break + re-acquire), THEN our release() must leave that replacement intact — an
+  // unconditional unlink would clobber a live lock and let two consults run concurrently.
+  const p = tmpStatePath('lockowner');
+  const lockPath = `${p}.lock`;
+  try { fs.unlinkSync(lockPath); } catch { /* ok */ }
+  const release = await acquireStateLock(p);
+  // Another owner takes over the lock path (different token content).
+  fs.writeFileSync(lockPath, 'some-other-owner-token');
+  release(); // must be a no-op — the token no longer matches ours
+  assert.equal(fs.existsSync(lockPath), true, 'release must not delete another owner\'s lock');
+  assert.equal(fs.readFileSync(lockPath, 'utf8'), 'some-other-owner-token');
+  fs.unlinkSync(lockPath);
+});
+
 test('runConsult with --task-id enforces max_consults_per_task across persisted state (exit 13)', async () => {
   // GIVEN a task at its consult cap in the persisted state file, WHEN consulting again with the same
   // --task-id, THEN it is refused (limit-exceeded, exit 13) — the file-backed budget is honoured.

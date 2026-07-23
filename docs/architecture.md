@@ -54,7 +54,7 @@ See [`config.example.yaml`](../config.example.yaml) for the full, runnable schem
 
 ```yaml
 models:
-  claude:  { provider: anthropic-cli, id: claude-claude-4-8, trust: trusted }
+  claude:  { provider: anthropic-cli, id: claude-opus-4-8, trust: trusted }
   gpt:   { provider: openai,        id: gpt-4o,          trust: untrusted }
   local: { provider: ollama,        id: gemma3:27b,      trust: local }
 
@@ -69,7 +69,7 @@ policy:
 `trust: local | trusted | untrusted` is user-assigned and provider-neutral. Sensitive ⇒ `local`+`trusted` only.
 Valid `provider` values: `anthropic-cli`, `anthropic-api`, `openai`, `openai-compatible`, `ollama`, `codex-cli`.
 
-## Provider adapters (v0.1 ships four)
+## Provider adapters (v0.1 ships six)
 
 | Adapter | Auth | Read-only invocation |
 |---|---|---|
@@ -90,7 +90,7 @@ trade-off (open egress = a compromised worker can exfiltrate).
 
 ## Interfaces
 
-- **CLI:** `consultum consult --context - [--sensitive] [--no-curate] [--json]` (question/context via stdin);
+- **CLI:** `consultum consult [--sensitive] [--no-curate] [--json]` (question/context via stdin);
   plus `consultum init | doctor | config`. Distinct exit codes: ok / refused-by-policy / provider-error /
   limit-exceeded / low-confidence.
 - **Library:** `consult({ question, context, sensitive }) -> StructuredRecommendation`.
@@ -106,5 +106,6 @@ Confidence (0–100) · Provenance (models used, curated y/n, **token counts / c
 reports usage**).
 
 ## Not this
-No agent runtime, router, workflow engine, or model gateway. No telemetry. No persistent state
-beyond an optional consult log (never secrets, never full prompts by default).
+No agent runtime, router, workflow engine, or model gateway. No telemetry. The only persisted state
+is the optional per-task consult-budget file used by `--task-id` (a JSON file under the temp dir
+tracking consult counts per task), never secrets, never full prompts by default.

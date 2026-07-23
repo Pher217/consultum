@@ -51,9 +51,11 @@ an individual is officially representing the community in public spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported through this repository's GitHub Security Advisories channel
-(`Security` tab → `Report a vulnerability`). All complaints will be reviewed and
-investigated promptly and fairly.
+reported privately to the project maintainer (@Pher217) via a GitHub direct
+message. Do **not** use the security-vulnerability channel (`Security` tab →
+`Report a vulnerability`) for conduct reports — that address is reserved for
+security issues and is a separate process (see SECURITY.md). All complaints will
+be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.

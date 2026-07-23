@@ -1,8 +1,10 @@
 # consultum
 
-> An advisory channel for delegated AI workers. When a cheap worker gets stuck, it can **ask up** — escalate a curated problem to a stronger model — instead of guessing.
+> **The advisory escalation frontier agents get natively — made open, and cross-provider.**
 
-**Status: v0.1 implemented.** `npm install -g consultum` (or `npx consultum`), then `consultum init` → `consultum doctor` → `consultum consult`. Security-first (see below). See [`docs/architecture.md`](docs/architecture.md) and [`docs/threat-model.md`](docs/threat-model.md).
+When a delegated AI worker gets stuck, it should be able to *ask up* — escalate to a stronger model — instead of guessing. A Claude agent can spawn an advisory subagent to do exactly that. A worker running in a tool loop, or a model boxed inside a sandbox, **can't** — it's isolated. `consultum` is that missing channel, open to any engine and any provider: a stuck worker sends a curated, secret-redacted packet to a stronger **advisor** — Claude, GPT/Codex, or a local model — and gets a structured, read-only recommendation back. **One open advisory channel. Any worker, any provider.**
+
+**Status: v0.1.** `npm install -g consultum` (or `npx consultum`) → `consultum init` → `consultum doctor` → `consultum consult`. Provider-agnostic, security-first (see below). See [`docs/architecture.md`](docs/architecture.md) and [`docs/threat-model.md`](docs/threat-model.md).
 
 ---
 
@@ -47,7 +49,7 @@ the box via `ps`. Two accepted shapes:
 - Plain text: first line is the question, the rest is context.
 
 ```bash
-consultum consult --context - <<'EOF'
+consultum consult <<'EOF'
 Why is my nightly job dropping rows?
 It's a Postgres COPY into a partitioned table, no errors logged, ~2% of rows missing.
 EOF
@@ -112,10 +114,10 @@ CLI-adapter caveats on Windows.
 
 ## Design principles
 
-- **Provider-agnostic.** Roles (curator, advisor, panel) map to models in one config file. No model names are hardcoded. Anthropic, OpenAI/Codex, Ollama, and any OpenAI-compatible endpoint are adapters.
+- **Open & provider-agnostic.** No lock-in, no hardcoded model names. Roles (curator, advisor, panel) map to models in one config file — mix Anthropic, OpenAI/Codex, Ollama, and any OpenAI-compatible endpoint freely: a frontier advisor with a cheap local curator, a hosted advisor with a local fallback, whatever fits. Adding a provider is one adapter.
 - **The advisor advises; it never decides.** `consultum` returns a structured recommendation with a confidence score and any dissent. The caller stays the decision-owner.
 - **Two hops on purpose.** A high-context, cheap *curator* turns a weak worker's messy dump into a tight, fact-vs-assumption packet, so the expensive advisor spends its tokens reasoning, not parsing. (Optional; off by default.)
-- **Fail-closed on sensitive data.** Mark a request sensitive and only `trusted`/`local` advisors are eligible — third-party providers are skipped, never silently used. Secrets are redacted before any cross-model send.
+- **Fail-closed on sensitive data.** Mark a request sensitive and only `trusted`/`local` advisors are eligible — any model you labelled `untrusted` is skipped, never silently used. (Trust is a label you assign per model, so a hosted provider you trust can still serve sensitive requests; it's your policy, enforced.) Secrets are redacted before any cross-model send.
 - **Clean & simple.** One command to install, one small config file to configure, `consultum doctor` to tell you what's reachable.
 
 ## Security posture (read this)
@@ -139,6 +141,7 @@ Not an agent runtime, task router, workflow engine, or model gateway. `consultum
 | Doc | What's in it |
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | Internal flow, config schema, provider adapters, interfaces |
+| [`docs/library-api.md`](docs/library-api.md) | Using consultum as a Node library — `consult`, `consultumTool`, config, errors |
 | [`docs/threat-model.md`](docs/threat-model.md) | Trust boundaries, attack scenarios, mitigations |
 | [`docs/when-to-consult.md`](docs/when-to-consult.md) | When escalating to an advisor is (and isn't) worth it |
 | [`docs/adding-a-provider.md`](docs/adding-a-provider.md) | How to write a new provider adapter |

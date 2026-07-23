@@ -114,6 +114,31 @@ test('sensitive_paths glob matches at the root and across segments, and normaliz
   assert.equal(isSensitive(c, { sourcePath: 'app/main.js' }), false);
 });
 
+test('sensitive_paths matching is case-insensitive (Windows fail-open guard)', () => {
+  // GIVEN a `**/secrets/**` rule, WHEN a Windows-style path uses a different case (App\Secrets\db.txt),
+  // THEN it still matches — a case-sensitive match would miss it and route sensitive data to an
+  // untrusted advisor (a fail-open). Matching case-insensitively fails CLOSED.
+  const c = parseConfig(`models:\n  o: { provider: anthropic-cli, id: x, trust: trusted }\nroles:\n  advisor: o\npolicy:\n  sensitive_paths: ["**/secrets/**"]\n`);
+  assert.equal(isSensitive(c, { sourcePath: 'App\\Secrets\\db.txt' }), true);
+  assert.equal(isSensitive(c, { sourcePath: 'PROJECT/SECRETS/KEY.PEM' }), true);
+});
+
+test('parseConfig rejects an Object.prototype key as a role model name (no crash, clean usage error)', () => {
+  // GIVEN roles.advisor: toString, WHEN parsed, THEN it is an unknown-model usage error — NOT accepted
+  // via Object.prototype (which then crashes when the "model" is resolved to a function).
+  const bad = `models:\n  x: { provider: ollama, id: y, trust: local }\nroles:\n  advisor: toString\n`;
+  assert.throws(() => parseConfig(bad, 'test.yaml'), (e) => e.kind === 'usage' && /unknown model 'toString'/.test(e.message));
+});
+
+test('parseConfig rejects a non-string base_url and a non-integer timeout_ms at parse time', () => {
+  // GIVEN base_url: 42, WHEN parsed, THEN a clean usage error — not a silent accept that later throws
+  // an uncaught TypeError (exit 1, outside the contract).
+  const badUrl = `models:\n  x: { provider: openai, id: y, trust: untrusted, base_url: 42 }\nroles:\n  advisor: x\n`;
+  assert.throws(() => parseConfig(badUrl, 'test.yaml'), (e) => e.kind === 'usage' && /base_url must be a string/.test(e.message));
+  const badTimeout = `models:\n  x: { provider: openai, id: y, trust: untrusted, timeout_ms: "soon" }\nroles:\n  advisor: x\n`;
+  assert.throws(() => parseConfig(badTimeout, 'test.yaml'), (e) => e.kind === 'usage' && /timeout_ms must be a positive integer/.test(e.message));
+});
+
 test('discoverConfigPath honors CONSULTUM_CONFIG over cwd', () => {
   const dir = tmpdir();
   const explicit = path.join(dir, 'custom.yaml');

@@ -875,9 +875,13 @@ function writeState(p, state) {
 
 // A stale lock is broken after this long — a process that crashed mid-consult must not wedge a
 // task-id forever. Sized above the longest realistic consult (curator 90s + a slow advisor).
-const STATE_LOCK_STALE_MS = 5 * 60_000;
+// Must exceed the longest a lock can legitimately be held: a consult holds it across curator (up to
+// 90s) + advisor + panel + reconciler. Set well above that so a slow-but-valid consult is never
+// mistaken for a crashed one and broken by another process. A genuinely crashed holder still frees the
+// lock after this long.
+const STATE_LOCK_STALE_MS = 20 * 60_000;
 const STATE_LOCK_RETRY_MS = 100;
-const STATE_LOCK_WAIT_MS = 6 * 60_000;
+const STATE_LOCK_WAIT_MS = 21 * 60_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -889,15 +893,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // a SHARED budget (workers wanting parallelism use distinct task-ids). Returns a release fn.
 async function acquireStateLock(statePath) {
   const lockPath = `${statePath}.lock`;
+  // A unique owner token written INTO the lock file. release() only unlinks the lock if it still
+  // holds our token — so if another process broke ours as stale and created its own, we never delete
+  // that replacement (the bug: an unconditional unlink lets a slow consult clobber a live lock).
+  const token = `${process.pid}.${nowMs()}.${Math.random().toString(36).slice(2)}`;
   const deadline = nowMs() + STATE_LOCK_WAIT_MS;
   for (;;) {
     try {
       const fd = fs.openSync(lockPath, 'wx'); // O_CREAT|O_EXCL — fails if the lock already exists
+      fs.writeSync(fd, token);
       fs.closeSync(fd);
-      return () => { try { fs.unlinkSync(lockPath); } catch { /* already gone */ } };
+      return () => {
+        try {
+          if (fs.readFileSync(lockPath, 'utf8') === token) fs.unlinkSync(lockPath);
+        } catch { /* lock gone, or now owned by another process after a stale-break — leave it */ }
+      };
     } catch (e) {
       if (!e || e.code !== 'EEXIST') throw e;
-      // Break a stale lock left by a crashed process.
+      // Break a lock only if it is older than the stale threshold (which is set above the longest a
+      // valid consult can hold it), so a slow-but-live consult is never broken.
       try {
         const age = nowMs() - fs.statSync(lockPath).mtimeMs;
         if (age > STATE_LOCK_STALE_MS) { fs.unlinkSync(lockPath); continue; }
