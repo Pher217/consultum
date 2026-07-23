@@ -12,24 +12,50 @@ export type ProviderName =
   | 'ollama'
   | 'codex-cli';
 
+/** Read-only filesystem tools an advisor may opt into. Only ever granted to a `trusted`/`local` model. */
+export interface ModelTools {
+  /** A subset of `'Read' | 'Grep' | 'Glob'` — shell/mutating tools are rejected at parse time. */
+  allow: string[];
+  /** Directory scope for the granted tools (required whenever `allow` is non-empty). */
+  dirs: string[];
+}
+
 export interface ModelSpec {
   provider: ProviderName;
   id: string;
   trust: Trust;
   name?: string;
-  baseUrl?: string;
-  apiKeyEnv?: string;
-  apiKeyFile?: string;
-  tokenEnv?: string;
-  tokenFile?: string;
-  timeoutMs?: number;
+  baseUrl?: string | null;
+  apiKeyEnv?: string | null;
+  apiKeyFile?: string | null;
+  tokenEnv?: string | null;
+  tokenFile?: string | null;
+  timeoutMs?: number | null;
+  /** Opt-in, directory-scoped read-only tools (anthropic-cli only). null = no tools (the default). */
+  tools?: ModelTools | null;
+  /** Directory of the config file, stamped by `loadConfig`; credential file paths resolve relative to it. */
+  configDir?: string | null;
+}
+
+/** Resolved policy. Every field has a default; a config may set any subset. */
+export interface Policy {
+  default_sensitive: boolean;
+  curate: boolean;
+  panel_threshold: number;
+  panel_auto: boolean;
+  max_consults_per_task: number;
+  min_attempts_before_debug_consult: number;
+  /** Globs; a matching `sourcePath` forces a request sensitive (matched case-insensitively). */
+  sensitive_paths: string[];
 }
 
 export interface ConsultumConfig {
   path?: string | null;
+  /** Directory of the resolved config file (stamped by `loadConfig`). */
+  dir?: string;
   models: Record<string, ModelSpec>;
   roles: { advisor: string[]; curator: string | null; panel: string[]; reconciler: string | null };
-  policy: Record<string, unknown>;
+  policy: Policy;
 }
 
 export interface Usage {
@@ -171,7 +197,11 @@ export type ErrorKind =
 
 export class ConsultumError extends Error {
   kind: ErrorKind;
+  /** The process exit code for this kind (see {@link EXIT}). */
+  exitCode: number;
   constructor(kind: ErrorKind, message: string, options?: { cause?: unknown });
+  /** The `--json` / shim failure shape. */
+  toJSON(): { error: { kind: ErrorKind; message: string } };
 }
 
 export const KIND: Record<string, ErrorKind>;
@@ -181,13 +211,23 @@ export const EXIT: Record<string, number>;
 
 export function exitCodeForKind(kind: ErrorKind): number;
 
-export function loadConfig(options?: { configPath?: string }): ConsultumConfig;
+/**
+ * Discover and load a config. Discovery order: `$CONSULTUM_CONFIG`, then `./consultum.{yaml,yml,json}`,
+ * then `$XDG_CONFIG_HOME/consultum/config.*`, then `~/.consultum.*`. Throws {@link ConsultumError}
+ * (kind `usage`) if no config is found or it is invalid.
+ */
+export function loadConfig(options?: {
+  configPath?: string;
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  home?: string;
+}): ConsultumConfig;
 export function parseConfig(yaml: string, filename?: string): ConsultumConfig;
 
 /** Best-effort redaction of common secret shapes. Not a defense against adversarial encoding. */
 export function redactSecrets(text: string): string;
 
-/** JSON Schema for the tool-loop shim's `consult` tool. */
+/** JSON Schema for the tool-loop shim's `consult_advisor` tool (mirrors {@link consultumTool}). */
 export const TOOL_SCHEMA: Record<string, unknown>;
 
 /**

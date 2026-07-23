@@ -141,6 +141,7 @@ Not an agent runtime, task router, workflow engine, or model gateway. `consultum
 | Doc | What's in it |
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | Internal flow, config schema, provider adapters, interfaces |
+| [`docs/library-api.md`](docs/library-api.md) | Using consultum as a Node library — `consult`, `consultumTool`, config, errors |
 | [`docs/threat-model.md`](docs/threat-model.md) | Trust boundaries, attack scenarios, mitigations |
 | [`docs/when-to-consult.md`](docs/when-to-consult.md) | When escalating to an advisor is (and isn't) worth it |
 | [`docs/adding-a-provider.md`](docs/adding-a-provider.md) | How to write a new provider adapter |
