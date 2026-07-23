@@ -1,5 +1,7 @@
 # consultum
 
+[![npm](https://img.shields.io/npm/v/consultum)](https://www.npmjs.com/package/consultum) [![CI](https://github.com/Pher217/consultum/actions/workflows/ci.yml/badge.svg)](https://github.com/Pher217/consultum/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md) [![GitHub stars](https://img.shields.io/github/stars/Pher217/consultum?style=social)](https://github.com/Pher217/consultum/stargazers)
+
 > **The advisory escalation frontier agents get natively — made open, and cross-provider.**
 
 When a delegated AI worker gets stuck, it should be able to *ask up* — escalate to a stronger model — instead of guessing. A Claude agent can spawn an advisory subagent to do exactly that. A worker running in a tool loop, or a model boxed inside a sandbox, **can't** — it's isolated. `consultum` is that missing channel, open to any engine and any provider: a stuck worker sends a curated, secret-redacted packet to a stronger **advisor** — Claude, GPT/Codex, or a local model — and gets a structured, read-only recommendation back. **One open advisory channel. Any worker, any provider.**

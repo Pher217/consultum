@@ -3,7 +3,7 @@
 All notable changes to consultum are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
-## [0.1.0] — 2026-07-20
+## [0.1.0] — 2026-07-23
 
 First release. Provider-agnostic advisory-escalation channel for delegated AI workers: when a cheap
 worker gets stuck, it escalates a curated, secret-redacted problem to a stronger read-only advisor.
@@ -11,7 +11,7 @@ worker gets stuck, it escalates a curated, secret-redacted problem to a stronger
 ### Added
 - `consult` (single advisor + optional curator, off by default, with a deterministic template
   fallback) · ordered advisor fallback chain with retry-once on malformed output.
-- Four provider adapters: `anthropic-cli` (+ thin `anthropic-api`), `openai`/`openai-compatible`,
+- Six provider adapters: `anthropic-cli` (+ thin `anthropic-api`), `openai`/`openai-compatible`,
   `ollama`, `codex-cli` (with the `codex exec -` stdin fix).
 - CLI (`consult` / `init` / `doctor` / `config`, question + context via stdin), library
   (`consult`, `consultumTool`), and a tool-loop shim (`consult_advisor` schema + Ollama/OpenAI examples).
