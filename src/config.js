@@ -110,7 +110,10 @@ function normalizeConfig(raw, filename) {
       );
     }
   }
-  const models = {};
+  // Null-prototype: model NAMES are looked up as `models[n]` and `!models[n]` gates "unknown model".
+  // With a normal object, `models['toString']` resolves to Object.prototype.toString (truthy), so a
+  // `roles.advisor: toString` would pass validation and then crash when resolved. Own-keys only.
+  const models = Object.create(null);
   if (!raw.models || typeof raw.models !== 'object' || Array.isArray(raw.models)) {
     throw new ConsultumError(KIND.USAGE, `config ${filename}: 'models' mapping is required`);
   }
@@ -140,6 +143,24 @@ function normalizeConfig(raw, filename) {
         KIND.USAGE,
         `config ${filename}: model '${name}' needs trust one of ${TRUST_VALUES.join(' | ')} (got '${spec.trust}')`,
       );
+    }
+    // Validate the optional fields' TYPES at parse time — otherwise e.g. `base_url: 42` parses fine
+    // and only blows up later as an uncaught TypeError (exit 1, outside the contract). Fail here, with
+    // a clear usage error, instead.
+    const strField = (snake, camel) => {
+      const v = spec[snake] ?? spec[camel];
+      if (v !== undefined && v !== null && typeof v !== 'string') {
+        throw new ConsultumError(KIND.USAGE, `config ${filename}: model '${name}' ${snake} must be a string, got ${JSON.stringify(v)}`);
+      }
+    };
+    strField('base_url', 'baseUrl');
+    strField('api_key_env', 'apiKeyEnv');
+    strField('api_key_file', 'apiKeyFile');
+    strField('token_env', 'tokenEnv');
+    strField('token_file', 'tokenFile');
+    const timeout = spec.timeout_ms ?? spec.timeoutMs;
+    if (timeout !== undefined && timeout !== null && (typeof timeout !== 'number' || !Number.isInteger(timeout) || timeout <= 0)) {
+      throw new ConsultumError(KIND.USAGE, `config ${filename}: model '${name}' timeout_ms must be a positive integer, got ${JSON.stringify(timeout)}`);
     }
     models[name] = {
       name,
@@ -384,7 +405,12 @@ function globToRegExp(glob) {
       re += c.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
     }
   }
-  return new RegExp(re + '$');
+  // Case-INSENSITIVE: this drives a security control (sensitive-path routing). On Windows paths are
+  // case-insensitive, so a case-sensitive match would let `App\Secrets\db.txt` slip past a
+  // `**/secrets/**` rule and route sensitive data to an untrusted advisor — a fail-open. Matching
+  // case-insensitively fails CLOSED (it can only over-flag as sensitive, never under-flag), which is
+  // the safe direction for this control.
+  return new RegExp(re + '$', 'i');
 }
 
 // Ordered advisor fallback chain for this request. When sensitive, drop untrusted (third-party)

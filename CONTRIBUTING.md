@@ -15,8 +15,9 @@ npm test        # node --test
 npm run lint     # node scripts/lint.mjs
 ```
 
-Both must pass before a PR is merged. CI runs the full matrix (Node 20/22 on Linux, macOS, and
-Windows) with no live provider keys — tests run entirely against injected fakes.
+Both must pass before a PR is merged. The CI matrix (Node 20/22 on Linux, macOS, and Windows) is
+planned but not yet enabled — it is parked at `ci/` pending setup — and will run with no live
+provider keys once active.
 
 ## Adding a provider adapter
 

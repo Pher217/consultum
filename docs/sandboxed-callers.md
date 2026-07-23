@@ -40,15 +40,15 @@ Point a model at it:
 models:
   claude:
     provider: anthropic-cli
-    id: claude-claude-4-8
+    id: claude-opus-4-8
     trust: trusted
-    token_file: ~/.config/consultum/claude-token   # injected as CLAUDE_CODE_OAUTH_TOKEN into the subprocess
+    token_file: /home/user/.config/consultum/claude-token   # note: ~ is not expanded — use an absolute or config-relative path
     # token_env: CLAUDE_CODE_OAUTH_TOKEN        # override the var name if your file holds an API key
   gpt:
     provider: openai
     id: gpt-4o
     trust: untrusted
-    api_key_file: ~/.config/consultum/openai-key    # read instead of OPENAI_API_KEY
+    api_key_file: /home/user/.config/consultum/openai-key    # read instead of OPENAI_API_KEY
 ```
 
 Rules consultum enforces on a credential file (so a hostile config can't turn an arbitrary file into an

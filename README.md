@@ -117,7 +117,7 @@ CLI-adapter caveats on Windows.
 - **Open & provider-agnostic.** No lock-in, no hardcoded model names. Roles (curator, advisor, panel) map to models in one config file — mix Anthropic, OpenAI/Codex, Ollama, and any OpenAI-compatible endpoint freely: a frontier advisor with a cheap local curator, a hosted advisor with a local fallback, whatever fits. Adding a provider is one adapter.
 - **The advisor advises; it never decides.** `consultum` returns a structured recommendation with a confidence score and any dissent. The caller stays the decision-owner.
 - **Two hops on purpose.** A high-context, cheap *curator* turns a weak worker's messy dump into a tight, fact-vs-assumption packet, so the expensive advisor spends its tokens reasoning, not parsing. (Optional; off by default.)
-- **Fail-closed on sensitive data.** Mark a request sensitive and only `trusted`/`local` advisors are eligible — third-party providers are skipped, never silently used. Secrets are redacted before any cross-model send.
+- **Fail-closed on sensitive data.** Mark a request sensitive and only `trusted`/`local` advisors are eligible — any model you labelled `untrusted` is skipped, never silently used. (Trust is a label you assign per model, so a hosted provider you trust can still serve sensitive requests; it's your policy, enforced.) Secrets are redacted before any cross-model send.
 - **Clean & simple.** One command to install, one small config file to configure, `consultum doctor` to tell you what's reachable.
 
 ## Security posture (read this)

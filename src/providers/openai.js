@@ -30,7 +30,9 @@ export function create(model, deps) {
           { headers: { Authorization: `Bearer ${key}` }, timeoutMs },
         );
       } catch (err) {
-        throw new ConsultumError(KIND.PROVIDER_ERROR, `openai (${model.id}) failed: ${redactSecrets(err.message)}`, { cause: err });
+        // Redact the CAUSE too, not just the message: the raw provider error can carry the key (e.g.
+        // a URL with the token), and whole-error logging would surface `err.cause` verbatim.
+        throw new ConsultumError(KIND.PROVIDER_ERROR, `openai (${model.id}) failed: ${redactSecrets(err.message)}`, { cause: new Error(redactSecrets(String((err && err.message) || err))) });
       }
       const text = (data?.choices?.[0]?.message?.content || '').trim();
       if (!text) throw new ConsultumError(KIND.PROVIDER_ERROR, `openai (${model.id}) returned no content`);
