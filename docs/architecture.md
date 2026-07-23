@@ -90,7 +90,7 @@ trade-off (open egress = a compromised worker can exfiltrate).
 
 ## Interfaces
 
-- **CLI:** `consultum consult --context - [--sensitive] [--no-curate] [--json]` (question/context via stdin);
+- **CLI:** `consultum consult [--sensitive] [--no-curate] [--json]` (question/context via stdin);
   plus `consultum init | doctor | config`. Distinct exit codes: ok / refused-by-policy / provider-error /
   limit-exceeded / low-confidence.
 - **Library:** `consult({ question, context, sensitive }) -> StructuredRecommendation`.
