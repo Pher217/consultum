@@ -3,6 +3,15 @@
 All notable changes to consultum are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## Unreleased
+
+### Added
+- `docs/paired-sessions.md` — an **experimental** companion pattern: a file-based mailbox between
+  two *long-running* interactive sessions (e.g. an OpenHands worker and an advisor chat), where
+  the synchronous one-shot `consult` shape doesn't fit. Ships with `contrib/pair/`
+  (`pair.sh` + `SKILL.md`) and a smoke suite. **No CLI surface and no compatibility guarantee** —
+  the graduation criteria for making it real software are in the doc.
+
 ## [0.1.0] — 2026-07-23
 
 First release. Provider-agnostic advisory-escalation channel for delegated AI workers: when a cheap
