@@ -17,7 +17,18 @@ newid() { printf '%s-%s-%s' "$(date -u +%Y%m%dT%H%M%S)" "$$" "${RANDOM}"; }
 
 # Creation time, epoch seconds. macOS birth time, else Linux, else mtime.
 btime() {
-  stat -f %B "$1" 2>/dev/null || stat -c %W "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
+  local t=''
+  # Probe GNU first. BSD stat has no -c, so it fails cleanly and we fall through.
+  # The reverse is NOT safe: GNU reads -f as --file-system and *succeeds*, printing
+  # prose ("File: ...") that then blows up the caller's arithmetic under `set -u`.
+  if t="$(stat -c %W "$1" 2>/dev/null)"; then
+    # %W is 0 or '-' on filesystems that don't record a birth time.
+    case "$t" in ''|0|-) t="$(stat -c %Y "$1" 2>/dev/null || echo '')" ;; esac
+  else
+    t="$(stat -f %B "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo '')"
+  fi
+  case "$t" in ''|*[!0-9]*) t=0 ;; esac   # never hand a non-number to $(( ))
+  printf '%s\n' "$t"
 }
 
 # Atomic publish: write to a temp file on the same filesystem, then rename.
