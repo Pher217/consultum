@@ -150,6 +150,7 @@ Not an agent runtime, task router, workflow engine, or model gateway. `consultum
 | [`docs/sandboxed-callers.md`](docs/sandboxed-callers.md) | Calling consultum from inside a sandboxed worker |
 | [`docs/windows.md`](docs/windows.md) | Windows support matrix and caveats |
 | [`docs/calling-from-python.md`](docs/calling-from-python.md) | Driving consultum from Python (or any language) |
+| [`docs/paired-sessions.md`](docs/paired-sessions.md) | Experimental: a file channel between two *long-running* sessions, where the one-shot model-to-model consult doesn't fit |
 
 ## License
 
