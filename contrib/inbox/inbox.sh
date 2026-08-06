@@ -132,16 +132,21 @@ cmd_ask() {
     redact_stdin "$rj" > "$tmpdir/question.md" || { rm -rf "$tmpdir"; die "ask: redaction failed"; }
   fi
 
+  # schemaVersion is present from day one — adding it later would itself be the breaking change
+  # (same reasoning as StructuredRecommendation in consult.js). `redacted: true` records that the
+  # redaction control actually ran, so it's auditable after the fact rather than merely claimed.
   node -e '
     const fs = require("fs");
     const [, metaPath, id, slug, from, sensitive, urgency, cwd, branch] = process.argv;
     fs.writeFileSync(metaPath, JSON.stringify({
+      schemaVersion: 1,
       id, slug,
       from: from || null,
       sensitive: sensitive === "1",
       urgency: urgency || null,
       cwd, branch: branch || null,
       created: new Date().toISOString(),
+      redacted: true,
       answered: false,
     }, null, 2) + "\n");
   ' "$tmpdir/meta.json" "$id" "$slug" "$from" "$sensitive" "$urgency" "$cwd" "$branch" \

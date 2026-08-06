@@ -51,13 +51,19 @@ test('ask writes an open question atomically and prints only the id', { skip }, 
   // GIVEN a fresh inbox root
   // WHEN a question is asked
   // THEN it exits 0, prints only the id on stdout, and open/<id>/{question.md,meta.json} exist
-  //      with the question directory locked to 0700
+  //      with the question directory locked to 0700, and meta.json actually carries its
+  //      required fields — not merely present, but schemaVersion 1, redacted true, answered
+  //      false, and an id matching what `ask` printed
   withInbox((inbox, root) => {
     const id = inbox(['ask', '--slug', 'smoke'], { input: '## Question\nShip it?\n' });
     assert.match(id, /^\d{8}T\d{6}Z-smoke-\d+-\d+$/);
     const dir = join(root, 'open', id);
     assert.equal(readFileSync(join(dir, 'question.md'), 'utf8'), '## Question\nShip it?\n');
-    assert.ok(existsSync(join(dir, 'meta.json')));
+    const meta = JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf8'));
+    assert.equal(meta.schemaVersion, 1);
+    assert.equal(meta.redacted, true);
+    assert.equal(meta.answered, false);
+    assert.equal(meta.id, id);
     assert.equal(statSync(dir).mode & 0o777, 0o700);
   });
 });
