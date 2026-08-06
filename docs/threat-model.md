@@ -83,6 +83,53 @@ therefore make consultum send a referenced credential (an env-var key today; a f
   exfiltrate an env-var credential — inherent to a tool that sends credentials to configured endpoints.
   The control is "don't let untrusted parties write your config," stated plainly here.
 
+### A8 — The human inbox (`contrib/inbox`): unattended agent, asynchronous human answer
+`contrib/inbox` lets an agent `ask` a question and continue, then `check`/`wait` for a human's
+`answer` later, with no live session on either end for the request/answer path itself. That gap
+between ask and answer is new attack surface `consult`'s synchronous, single-process model
+doesn't have.
+- **Redaction-bypass-by-outage, not just by encoding (extends A4).** `ask` resolves
+  `redactSecrets` by walking from the `consultum` binary found on `PATH`
+  (`command -v consultum` → `readlink -f` → package root → `src/redact.js`). Any hop failing —
+  `consultum` not installed, a broken symlink, a moved `src/redact.js` — must not silently
+  produce an unredacted `question.md`. A control that no-ops under its own failure is worse than
+  no control, because callers stop checking for it.
+  - **Mitigation:** `ask` resolves the redactor **before any filesystem mutation** and hard-fails
+    (no `open/<id>/` directory created at all) if resolution fails at any step.
+    `test/inbox-channel.test.mjs` runs `ask` with `consultum` absent from `PATH` and asserts both
+    a non-zero exit and that no `question.md` exists anywhere under the root.
+- **A forged answer state (new to this channel — A5's sibling for a file-based mirror).**
+  `meta.json`'s `answered` field is written for human convenience but is plain, hand-editable
+  JSON sitting next to the question. An agent (or a bug) that trusted this field could be told a
+  question was answered when it wasn't, and act on stale or absent guidance.
+  - **Mitigation:** every code path that decides "is this answered" — `check`, `wait` — tests
+    `[ -f answer.md ]` directly and never reads `meta.json`'s `answered` field. A test asserts
+    that a hand-forged `"answered": true` with no `answer.md` present still reports pending
+    (exit `20`).
+- **A colliding channel root deletes a populated inbox (operational, not adversarial, but the
+  blast radius is real data loss).** `contrib/pair`'s `close <topic>` (no `--force`) decides a
+  channel is safe to delete by counting `request-*.md` files directly under the topic directory.
+  The inbox uses a different layout (`open/<id>/question.md`); if the inbox root were nested
+  under pair's root, `pair.sh close inbox` would see zero `request-*.md` files, conclude nothing
+  is open, and `rm -rf` a populated inbox with no `--force` needed. Reproduced live.
+  - **Mitigation:** the inbox's default root (`~/.claude/inbox`) is a sibling of, not nested
+    under, pair's root (`~/.claude/consult`) — enforced by convention and asserted by a test
+    (`test/inbox-channel.test.mjs`) that the default root does not contain `/consult/`.
+- **A hardcoded second copy of the root default drifts (operational).** A caller in another repo
+  that hardcodes `~/.claude/inbox` instead of asking this tool loses sync the moment the default
+  changes here, and then polls the wrong directory forever, reading "still pending" against a
+  question a human already answered.
+  - **Mitigation:** `inbox.sh root` is the single point where the default is computed
+    (`$CONSULTUM_INBOX` if set, else `~/.claude/inbox`); it is a pure, side-effect-free query,
+    documented in `contrib/inbox/SKILL.md` as the required way for an external caller to resolve
+    the root rather than hardcoding it.
+- **Argv/traversal (same class as A6, applied to this channel's own inputs).** `--slug` and any
+  user-supplied id are attacker-reachable strings (an agent could be tricked into passing a
+  crafted slug). An unvalidated slug like `../../etc/evil` could write outside the inbox root.
+  - **Mitigation:** ids and slugs are validated against a strict `[A-Za-z0-9_-]` charset before
+    any directory is touched; `/` and `.` are rejected outright. Bodies are stdin/`--file` only,
+    per A6.
+
 ## Controls in code (each adversary maps to a specific, tested control)
 
 | Adversary | Control | Where |
