@@ -90,22 +90,54 @@ between ask and answer is new attack surface `consult`'s synchronous, single-pro
 doesn't have.
 - **Redaction-bypass-by-outage, not just by encoding (extends A4).** `ask` resolves
   `redactSecrets` by walking from the `consultum` binary found on `PATH`
-  (`command -v consultum` → `readlink -f` → package root → `src/redact.js`). Any hop failing —
-  `consultum` not installed, a broken symlink, a moved `src/redact.js` — must not silently
-  produce an unredacted `question.md`. A control that no-ops under its own failure is worse than
-  no control, because callers stop checking for it.
+  (`command -v consultum` → `fs.realpathSync` → package root → `src/redact.js`). Any hop
+  failing — `consultum` not installed, a broken symlink, a moved `src/redact.js` — must not
+  silently produce an unredacted `question.md`. A control that no-ops under its own failure is
+  worse than no control, because callers stop checking for it.
   - **Mitigation:** `ask` resolves the redactor **before any filesystem mutation** and hard-fails
     (no `open/<id>/` directory created at all) if resolution fails at any step.
     `test/inbox-channel.test.mjs` runs `ask` with `consultum` absent from `PATH` and asserts both
-    a non-zero exit and that no `question.md` exists anywhere under the root.
-- **A forged answer state (new to this channel — A5's sibling for a file-based mirror).**
-  `meta.json`'s `answered` field is written for human convenience but is plain, hand-editable
-  JSON sitting next to the question. An agent (or a bug) that trusted this field could be told a
-  question was answered when it wasn't, and act on stale or absent guidance.
-  - **Mitigation:** every code path that decides "is this answered" — `check`, `wait` — tests
-    `[ -f answer.md ]` directly and never reads `meta.json`'s `answered` field. A test asserts
-    that a hand-forged `"answered": true` with no `answer.md` present still reports pending
-    (exit `20`).
+    a non-zero exit and that `open/` does not exist under the root at all.
+  - **PATH is trusted input, and is now verified, not merely followed (closes a real gap).**
+    Resolving by walking from whatever `consultum` happens to be first on `PATH` is only safe if
+    what's found there is actually the `consultum` package — a fake `<dir>/bin/consultum` earlier
+    on `PATH` (or a fake `node`) could otherwise point the walk at an attacker-chosen
+    `src/redact.js` that writes UNREDACTED content while still recording `"redacted": true"`,
+    silently and with no loud failure anywhere. `resolve_redact_js` now requires the resolved
+    package root's `package.json` to have `"name": "consultum"` and requires the resolved module
+    to export a callable `redactSecrets`, hard-failing (no directory created) if either check
+    fails. `test/inbox-channel.test.mjs` builds a fake package with a working redactor under the
+    wrong name and asserts `ask` still refuses it.
+- **An unsandboxed, same-uid agent forging its own unblock is the real residual threat here
+  (primary — not a forged `meta.json` field).** Nothing at the OS level distinguishes a human
+  typing `inbox.sh answer` from an agent that has filesystem access to the inbox root doing the
+  same thing. An unsandboxed worker that hits an `ask`/`wait` gate it doesn't like can simply
+  write its own `answer.md` and unblock itself — no forged field required, because `answer.md`
+  *is* the source of truth, and that's exactly what an agent with write access to it can forge.
+  - **Mitigation:** for the vigil path — the main intended use of this channel — nothing
+    automatically consumes an answer to resume work. There is no unhalt/resume operation that
+    reads `answer.md` and acts on it; a forged answer just sits there, inert, until a human
+    reviews the inbox (`list`/`show`) at the next natural checkpoint (e.g. morning review), where
+    a forged answer to a question the human never actually saw is visible and out of place.
+    `answer` additionally refuses to overwrite an existing `answer.md` (exit `10`), so once a
+    forgery is spotted it blocks the legitimate human answer rather than silently coexisting with
+    it — forcing a `close`+`ask` cycle that surfaces the conflict. Sandboxed callers (a properly
+    scoped worker) cannot reach the inbox root at all.
+  - **Honest residual:** a same-uid, unsandboxed worker that calls `wait` directly — rather than
+    going through a review gate that actually consumes the answer — CAN forge its own unblock.
+    There is no cryptographic answer authentication in this tool. **Do not route
+    agent-must-not-decide questions through `wait` in an unsandboxed context**; treat `wait` as
+    convenience for a trusted human loop, not a security boundary against the very agent it's
+    gating.
+- **A forged `answered` mirror is a related but secondary concern (A5's sibling for a file-based
+  mirror) — and as of this revision, moot by construction.** `meta.json` no longer carries an
+  `answered` field at all (it was written `false` at ask time and never flipped, so it was simply
+  stale information sitting next to the question — removed rather than kept in sync, per "one
+  fact, one place"). Even before removal, every code path that decides "is this answered" —
+  `check`, `wait` — tested `[ -f answer.md ]` directly and never read `meta.json`'s `answered`
+  field, so a hand-forged `meta.json` claiming `"answered": true` with no `answer.md` present
+  still reported pending (exit `20`); a test still asserts this for a hand-added copy of that
+  field.
 - **A colliding channel root deletes a populated inbox (operational, not adversarial, but the
   blast radius is real data loss).** `contrib/pair`'s `close <topic>` (no `--force`) decides a
   channel is safe to delete by counting `request-*.md` files directly under the topic directory.

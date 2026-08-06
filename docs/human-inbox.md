@@ -26,9 +26,9 @@ Agent  ◀─check/wait─  open/<id>/answer.md  ◀──answer──  Human
 $CONSULTUM_INBOX/
   open/<id>/
     question.md          the redacted question body
-    meta.json             id, slug, from, sensitive, urgency, cwd, branch, created, answered
-    answer.md              (once answered)
-    answer.meta.json        (once answered)
+    meta.json             id, slug, from, sensitive, urgency, cwd, branch, created, redacted
+    answer.md              (once answered — the sole source of truth for "answered")
+    answer.meta.json        (once answered — schemaVersion, id, ts, by, surface, note)
   closed/<id>/            same shape, moved here by `close`
 ```
 
@@ -36,9 +36,11 @@ $CONSULTUM_INBOX/
 or derive elapsed time from them. A sandboxed agent's clock can run hours ahead of the
 filesystem's; order by file birth time if you need chronology.
 
-`meta.json`'s `answered` field is a **derived mirror**, written for convenience. The source of
-truth everywhere in this tool is `[ -f answer.md ]`. A hand-edited or corrupted `meta.json` that
-claims `"answered": true` with no `answer.md` on disk still reports pending.
+The source of truth everywhere in this tool for "is this answered" is `[ -f answer.md ]` — nothing
+else. `meta.json` (written at ask time) carries no `answered` field at all: a field written `false`
+and never flipped is stale information, not a fact worth keeping in sync, so it isn't kept. A
+hand-edited or corrupted `meta.json` claiming `"answered": true` with no `answer.md` on disk still
+reports pending — `check`/`wait` never read that field, forged or otherwise.
 
 ## Root — one definition, discovered, not hardcoded
 
@@ -80,6 +82,12 @@ If any hop fails — `consultum` not on `PATH`, the resolved path missing, `reda
 expected — **`ask` hard-fails and writes nothing.** A redaction control that silently no-ops on
 failure is worse than no control at all; see `docs/threat-model.md` §A8.
 
+**PATH is trusted input.** Walking from whatever `consultum` is first on `PATH` is only safe if
+what's found there really is the `consultum` package, so `resolve_redact_js` verifies identity
+before trusting anything it resolves: the package root's `package.json` must have
+`"name": "consultum"`, and the resolved module must actually export a callable `redactSecrets`.
+Either check failing is a hard failure, same as every other hop above.
+
 Redaction applies to `ask` only. `answer` is written by a human and is not passed through the
 redactor — see *Non-goals* below.
 
@@ -92,12 +100,23 @@ redactor — see *Non-goals* below.
 - `answer` takes an atomic claim (`mkdir "$d/answer.claim"`, which is an atomic exclusive-create
   at the filesystem level) **before** writing. Two concurrent `answer` invocations cannot both
   pass a check-then-write race — only one wins the `mkdir`.
+- **Answer publication is itself a transaction.** `answer` stages the COMPLETE
+  `answer.meta.json` (`schemaVersion`, `id`, `ts`, `by`, `surface`, `note`) in a temp file, `mv`s
+  it into place, and verifies it landed as a real, non-empty file — only THEN does it `mv`
+  `answer.md` into place. If the metadata write or publish fails at any step, `answer.md` is never
+  published and the command exits non-zero; the `answer.claim` lock is released either way, so a
+  failed attempt doesn't permanently block a later legitimate one. `answer.md` remains the sole
+  source of truth for "answered" throughout — the ordering exists only so a reader can never
+  observe an answer with no (or partial) metadata, not to create a second source of truth.
 - `answer` **refuses to overwrite** an existing `answer.md` (exit 10), leaving the original bytes
   untouched. If an answer was wrong, `close` the question and `ask` a new one.
 - `meta.json` is written via `node -e … JSON.stringify(...)`, never shell string interpolation —
   `cwd` and `branch` can contain quotes or newlines that would corrupt hand-built JSON.
 - Every question directory and the root are `chmod 700` — the body can contain repo paths, file
-  contents, and working context.
+  contents, and working context. A `chmod` failure on `ask` (or on `watch`'s startup) is a hard
+  error, not a swallowed `|| true`: the directories are guaranteed to exist by that point, so a
+  failure to lock them down is real and actionable, and publishing over an unprotected root would
+  defeat the whole point of the 0700 protection.
 - Ids and slugs are validated against a strict charset (`[A-Za-z0-9_-]` only); `..` and `/` are
   rejected outright, closing the path-traversal route through `--slug`.
 
@@ -159,7 +178,10 @@ stdout, so `answer=$(inbox.sh check "$id")` composes cleanly once the exit code 
 ## Non-goals
 
 Not a notification system on its own — pair `watch` with the `Monitor` tool (or a cron-style
-poller) if you need a human to be paged rather than checking `list`. Not a review/approval
+poller) if you need a human to be paged rather than checking `list`. `watch`'s preview line
+withholds the body excerpt for any question whose `meta.json` marks it `sensitive` — it prints an
+opaque `[sensitive question — see …]` marker instead, since `watch`'s whole purpose is to echo
+content into a chat feed. Not a review/approval
 workflow with audit trail beyond the files themselves — the `open/`/`closed/` split and
 `meta.json` are enough for a single human working alone, not a multi-approver process. `answer`
 bodies are not redacted (a human typed them; redaction targets agent-sourced content flowing

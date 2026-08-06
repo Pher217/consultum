@@ -49,19 +49,42 @@ newid() { # newid <slug>
 # Resolve consultum's redact.js by walking from the binary on PATH — `import("consultum")` does
 # not resolve outside this repo. Hard-fails (writes nothing) if any hop is missing: a redaction
 # control that silently no-ops is worse than no control.
+#
+# PATH IS TRUSTED INPUT. A caller that controls PATH ahead of the real consultum install (a fake
+# `<dir>/bin/consultum` or a fake `node`) could otherwise make this resolve to an attacker-chosen
+# `src/redact.js` that writes unredacted content while claiming `redacted: true`. After resolving
+# the package root, verify its identity (`package.json` name is literally "consultum") and verify
+# the resolved module actually exports a callable `redactSecrets` before trusting it — see
+# docs/threat-model.md §A8.
 resolve_redact_js() {
   local bin real pkg rj
   bin="$(command -v consultum 2>/dev/null)" || die "cannot resolve redaction: 'consultum' not found on PATH — refusing to write unredacted content"
-  real=""
-  if real="$(readlink -f "$bin" 2>/dev/null)" && [ -n "$real" ]; then
-    :
-  elif command -v python3 >/dev/null 2>&1; then
-    real="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$bin" 2>/dev/null || true)"
-  fi
+  real="$(node -e '
+    const fs = require("fs");
+    try { process.stdout.write(fs.realpathSync(process.argv[1])); } catch { process.exit(1); }
+  ' "$bin" 2>/dev/null || true)"
   [ -n "$real" ] || die "cannot resolve the real path of the consultum binary — refusing to write unredacted content"
   pkg="$(dirname "$(dirname "$real")")"
+
+  [ -f "$pkg/package.json" ] || die "cannot verify package identity: no $pkg/package.json — refusing to write unredacted content (PATH is trusted input; see docs/threat-model.md §A8)"
+  node -e '
+    const fs = require("fs");
+    const pkgJson = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    if (pkgJson.name !== "consultum") process.exit(1);
+  ' "$pkg/package.json" 2>/dev/null \
+    || die "PATH resolves to a package named other than 'consultum' at $pkg — refusing to write unredacted content (PATH is trusted input; see docs/threat-model.md §A8)"
+
   rj="$pkg/src/redact.js"
   [ -f "$rj" ] || die "cannot locate redact.js at $rj — refusing to write unredacted content"
+
+  node --input-type=module -e '
+    import { pathToFileURL } from "node:url";
+    const rjPath = process.argv[1];
+    const mod = await import(pathToFileURL(rjPath).href);
+    if (typeof mod.redactSecrets !== "function") process.exit(1);
+  ' "$rj" 2>/dev/null \
+    || die "redact.js at $rj does not export a callable redactSecrets — refusing to write unredacted content"
+
   printf '%s\n' "$rj"
 }
 
@@ -116,7 +139,11 @@ cmd_ask() {
   branch="$(git branch --show-current 2>/dev/null || true)"
 
   mkdir -p "$ROOT/open"
-  chmod 700 "$ROOT" "$ROOT/open" 2>/dev/null || true
+  # A question body carries repo paths and working context — 0700 is the stated protection
+  # (B3). Both directories are guaranteed to exist at this point, so a chmod failure here is a
+  # real, actionable error, not a "target doesn't exist yet" race: fail loudly, don't publish.
+  chmod 700 "$ROOT" "$ROOT/open" \
+    || die "ask: could not set 0700 permissions on $ROOT — refusing to publish"
 
   # Build in a temp dir ON THE SAME FILESYSTEM as the destination (inside ROOT/open), then mv it
   # into place — question.md + meta.json must never be observable as a partial record, and a
@@ -135,6 +162,9 @@ cmd_ask() {
   # schemaVersion is present from day one — adding it later would itself be the breaking change
   # (same reasoning as StructuredRecommendation in consult.js). `redacted: true` records that the
   # redaction control actually ran, so it's auditable after the fact rather than merely claimed.
+  # No `answered` field here (B2): it was written false at ask time and never flipped, so it was
+  # simply false information sitting next to the question. `[ -f answer.md ]` is already the sole
+  # source of truth for "answered" — don't keep a second, driftable copy of the same fact.
   node -e '
     const fs = require("fs");
     const [, metaPath, id, slug, from, sensitive, urgency, cwd, branch] = process.argv;
@@ -147,7 +177,6 @@ cmd_ask() {
       cwd, branch: branch || null,
       created: new Date().toISOString(),
       redacted: true,
-      answered: false,
     }, null, 2) + "\n");
   ' "$tmpdir/meta.json" "$id" "$slug" "$from" "$sensitive" "$urgency" "$cwd" "$branch" \
     || { rm -rf "$tmpdir"; die "ask: could not write meta.json"; }
@@ -287,18 +316,38 @@ cmd_answer() {
   else
     cat > "$tmp"
   fi
-  mv -f "$tmp" "$d/answer.md"
 
-  node -e '
+  # B1: publication is a transaction. Stage the COMPLETE answer.meta.json first and verify it
+  # actually landed as a regular, non-empty file — only THEN move answer.md into place. This
+  # way a reader can never observe answer.md with no (or partial) metadata. answer.md remains
+  # the single source of truth for "answered"; the ordering exists only to make the record
+  # complete before it becomes observable, not to create a second source of truth.
+  local meta_tmp="$d/.answer.meta.tmp.$$"
+  if ! node -e '
     const fs = require("fs");
-    const metaPath = process.argv[1];
+    const [, metaPath, id] = process.argv;
     fs.writeFileSync(metaPath, JSON.stringify({
-      answered: true,
-      answered_at: new Date().toISOString(),
+      schemaVersion: 1,
+      id,
+      ts: new Date().toISOString(),
+      by: "human:cli",
+      surface: "cli",
+      note: null,
     }, null, 2) + "\n");
-  ' "$d/answer.meta.json" || true
-  # (process.argv[0] is node, argv[1] is the first extra arg — no "eval" placeholder with -e)
+  ' "$meta_tmp" "$id"; then
+    rm -f "$tmp" "$meta_tmp"
+    rmdir "$d/answer.claim" 2>/dev/null || true
+    die "answer: could not write answer.meta.json — refusing to publish answer.md"
+  fi
 
+  if ! mv -f "$meta_tmp" "$d/answer.meta.json" \
+     || [ ! -f "$d/answer.meta.json" ] || [ ! -s "$d/answer.meta.json" ]; then
+    rm -f "$tmp" "$meta_tmp"
+    rmdir "$d/answer.claim" 2>/dev/null || true
+    die "answer: could not publish answer.meta.json — refusing to publish answer.md"
+  fi
+
+  mv -f "$tmp" "$d/answer.md"
   rmdir "$d/answer.claim" 2>/dev/null || true
   printf 'answered %s\n' "$id"
 }
@@ -349,12 +398,31 @@ cmd_prune() {
   printf 'pruned %s closed question(s) older than %s days from %s\n' "$n" "$days" "$ROOT/closed"
 }
 
+# is_sensitive <dir> — true if <dir>/meta.json marks the question sensitive. `watch` uses this to
+# withhold a content preview: watch's whole purpose is to echo excerpts into a chat feed (via
+# Monitor), and a question marked sensitive must never have its body surface there.
+is_sensitive() {
+  local d="$1"
+  [ -f "$d/meta.json" ] || return 1
+  node -e '
+    const fs = require("fs");
+    try {
+      const meta = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      process.exit(meta.sensitive === true ? 0 : 1);
+    } catch { process.exit(1); }
+  ' "$d/meta.json" 2>/dev/null
+}
+
 # One line per new event. Feed this to the Monitor tool so each line becomes a chat
 # notification. Seen-markers live on disk under ROOT/.seen, so restarting the watcher does not
 # re-announce old events.
 cmd_watch() {
   mkdir -p "$ROOT/open" "$ROOT/.seen"
-  chmod 700 "$ROOT" "$ROOT/.seen" 2>/dev/null || true
+  # Same 0700 rationale as cmd_ask (B3): both dirs are guaranteed to exist here, so a chmod
+  # failure is real and actionable — fail loudly rather than run a watcher over an unprotected
+  # root.
+  chmod 700 "$ROOT" "$ROOT/.seen" \
+    || die "watch: could not set 0700 permissions on $ROOT — refusing to start"
   while true; do
     local d id
     for d in "$ROOT"/open/*/; do
@@ -362,13 +430,21 @@ cmd_watch() {
       id="$(basename "$d")"
       if [ -f "$d/question.md" ] && [ ! -e "$ROOT/.seen/$id.asked" ]; then
         : > "$ROOT/.seen/$id.asked"
-        printf 'INBOX[ask] %s :: %s\n' "$id" \
-          "$( (grep -v -e '^$' "$d/question.md" || true) | head -c 200 | tr '\n' ' ')"
+        if is_sensitive "$d"; then
+          printf 'INBOX[ask] %s :: [sensitive question — see `inbox.sh show %s`]\n' "$id" "$id"
+        else
+          printf 'INBOX[ask] %s :: %s\n' "$id" \
+            "$( (grep -v -e '^$' "$d/question.md" || true) | head -c 200 | tr '\n' ' ')"
+        fi
       fi
       if [ -f "$d/answer.md" ] && [ ! -e "$ROOT/.seen/$id.answered" ]; then
         : > "$ROOT/.seen/$id.answered"
-        printf 'INBOX[answer] %s :: %s\n' "$id" \
-          "$( (grep -v -e '^$' "$d/answer.md" || true) | head -c 200 | tr '\n' ' ')"
+        if is_sensitive "$d"; then
+          printf 'INBOX[answer] %s :: [sensitive question — see `inbox.sh show %s`]\n' "$id" "$id"
+        else
+          printf 'INBOX[answer] %s :: %s\n' "$id" \
+            "$( (grep -v -e '^$' "$d/answer.md" || true) | head -c 200 | tr '\n' ' ')"
+        fi
       fi
     done
     sleep 5

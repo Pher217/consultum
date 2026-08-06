@@ -110,5 +110,9 @@ without `--timeout`) · `11` refused by policy (`ask --sensitive` while
 - **Body via stdin or `--file`, never argv.** Argv leaks to `ps`.
 - **Redaction is not optional and is not vendored.** `ask` calls consultum's real
   `redactSecrets` by resolving the installed binary's path; it never ships its own copy.
+- **PATH is trusted input.** The binary resolution walk (`command -v consultum` → real path →
+  package root → `src/redact.js`) verifies the resolved package is actually named `consultum`
+  and that the resolved module exports a callable `redactSecrets` before trusting it — a fake
+  `consultum` earlier on `PATH` is rejected, not silently followed.
 - **Ids are identifiers, not timestamps.** Never sort by them or derive elapsed time from them.
 - **`check`/`wait` print only the answer body on stdout** — script-parseable by design.

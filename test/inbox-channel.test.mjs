@@ -3,9 +3,10 @@
 // companion pattern, not part of the consultum CLI contract.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import {
-  mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, symlinkSync,
+  mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, symlinkSync, mkdirSync,
+  readdirSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -33,14 +34,16 @@ function withInbox(fn, { withConsultum = true, extraEnv = {} } = {}) {
     symlinkSync(join(REPO_ROOT, 'bin', 'consultum.js'), join(binDir, 'consultum'));
   }
   const PATH = withConsultum ? `${binDir}:${BASE_PATH}` : BASE_PATH;
+  const env = { PATH, HOME: process.env.HOME, CONSULTUM_INBOX: root, ...extraEnv };
+  // Trimmed convenience wrapper — fine for ids/status lines, but NEVER use it to assert an
+  // answer body byte-for-byte: trimming hides trailing-newline/whitespace corruption.
   const inbox = (args, opts = {}) =>
-    execFileSync('bash', [SCRIPT, ...args], {
-      encoding: 'utf8',
-      env: { PATH, HOME: process.env.HOME, CONSULTUM_INBOX: root, ...extraEnv },
-      input: opts.input,
-    }).trim();
+    execFileSync('bash', [SCRIPT, ...args], { encoding: 'utf8', env, input: opts.input }).trim();
+  // Untrimmed — for exact-body assertions.
+  const inboxRaw = (args, opts = {}) =>
+    execFileSync('bash', [SCRIPT, ...args], { encoding: 'utf8', env, input: opts.input });
   try {
-    return fn(inbox, root);
+    return fn(inbox, root, inboxRaw, env);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(binDir, { recursive: true, force: true });
@@ -52,8 +55,9 @@ test('ask writes an open question atomically and prints only the id', { skip }, 
   // WHEN a question is asked
   // THEN it exits 0, prints only the id on stdout, and open/<id>/{question.md,meta.json} exist
   //      with the question directory locked to 0700, and meta.json actually carries its
-  //      required fields — not merely present, but schemaVersion 1, redacted true, answered
-  //      false, and an id matching what `ask` printed
+  //      required fields — schemaVersion 1, redacted true, an id matching what `ask` printed —
+  //      and does NOT carry an `answered` field at all (B2: [ -f answer.md ] is the sole source
+  //      of truth; a field that is written false and never flips is not kept around to drift)
   withInbox((inbox, root) => {
     const id = inbox(['ask', '--slug', 'smoke'], { input: '## Question\nShip it?\n' });
     assert.match(id, /^\d{8}T\d{6}Z-smoke-\d+-\d+$/);
@@ -62,8 +66,8 @@ test('ask writes an open question atomically and prints only the id', { skip }, 
     const meta = JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf8'));
     assert.equal(meta.schemaVersion, 1);
     assert.equal(meta.redacted, true);
-    assert.equal(meta.answered, false);
     assert.equal(meta.id, id);
+    assert.ok(!('answered' in meta), 'meta.json must not carry an answered field');
     assert.equal(statSync(dir).mode & 0o777, 0o700);
   });
 });
@@ -87,11 +91,12 @@ test('check on an unanswered question exits 20 with empty stdout', { skip }, () 
 test('answer then check returns the answer body exactly', { skip }, () => {
   // GIVEN an open question
   // WHEN it is answered and then checked
-  // THEN check exits 0 and prints exactly the answer body
-  withInbox((inbox) => {
+  // THEN check exits 0 and prints EXACTLY the answer body, untrimmed — including the trailing
+  //      newline, so trailing-whitespace corruption in the pipeline would be caught
+  withInbox((inbox, root, inboxRaw) => {
     const id = inbox(['ask'], { input: 'q\n' });
     assert.match(inbox(['answer', id], { input: 'Yes, ship it.\n' }), /answered/);
-    assert.equal(inbox(['check', id]), 'Yes, ship it.');
+    assert.equal(inboxRaw(['check', id]), 'Yes, ship it.\n');
   });
 });
 
@@ -109,6 +114,39 @@ test('answering twice refuses and leaves the original answer untouched', { skip 
       assert.equal(err.status, 10);
     }
     assert.equal(readFileSync(join(root, 'open', id, 'answer.md'), 'utf8'), 'Original.\n');
+  });
+});
+
+test('B1: a successful answer writes a complete answer.meta.json', { skip }, () => {
+  // GIVEN an open question
+  // WHEN it is answered
+  // THEN answer.meta.json carries schemaVersion, id, ts, by, and surface (not the old
+  //      two-field { answered, answered_at } stub)
+  withInbox((inbox, root) => {
+    const id = inbox(['ask'], { input: 'q\n' });
+    inbox(['answer', id], { input: 'Yes.\n' });
+    const meta = JSON.parse(readFileSync(join(root, 'open', id, 'answer.meta.json'), 'utf8'));
+    assert.equal(meta.schemaVersion, 1);
+    assert.equal(meta.id, id);
+    assert.equal(typeof meta.ts, 'string');
+    assert.equal(meta.by, 'human:cli');
+    assert.equal(meta.surface, 'cli');
+  });
+});
+
+test('B1: answer publication is transactional — a failed metadata write must not publish answer.md', { skip }, () => {
+  // GIVEN a question whose answer.meta.json path is pre-occupied by a directory, forcing the
+  //       metadata publish step to fail
+  // WHEN answer is attempted
+  // THEN it exits non-zero, answer.md is never created, and the answer.claim lock is released
+  //      (so a subsequent legitimate answer attempt is not left permanently blocked)
+  withInbox((inbox, root) => {
+    const id = inbox(['ask'], { input: 'q\n' });
+    const dir = join(root, 'open', id);
+    mkdirSync(join(dir, 'answer.meta.json'));
+    assert.throws(() => inbox(['answer', id], { input: 'should not publish\n' }));
+    assert.ok(!existsSync(join(dir, 'answer.md')), 'answer.md must not be published when metadata publish fails');
+    assert.ok(!existsSync(join(dir, 'answer.claim')), 'the claim lock must be released after failure');
   });
 });
 
@@ -162,12 +200,73 @@ test('ask redacts secrets before anything touches disk', { skip }, () => {
 test('ask hard-fails and writes nothing when redaction cannot be resolved', { skip }, () => {
   // GIVEN a PATH with no `consultum` binary on it
   // WHEN ask is called
-  // THEN it exits non-zero and no question.md exists anywhere under the root
+  // THEN it exits non-zero and open/ itself does not exist at all — not merely "no question.md",
+  //      which a stray open/.tmp.* working dir or a partial-metadata write would also satisfy
   withInbox((inbox, root) => {
     assert.throws(() => inbox(['ask'], { input: 'q\n' }));
     const openDir = join(root, 'open');
-    assert.ok(!existsSync(openDir) || spawnSync('find', [openDir, '-name', 'question.md']).stdout.toString().trim() === '');
+    assert.ok(!existsSync(openDir), 'open/ must not exist when redaction cannot be resolved');
   }, { withConsultum: false });
+});
+
+test('B4: a PATH-poisoned consultum package with the wrong identity is rejected', { skip }, () => {
+  // GIVEN a fake `consultum` on PATH that resolves to a package that is NOT named "consultum"
+  //       (a plausible PATH-poisoning shape: same bin/src layout, different package.json name)
+  // WHEN ask is called
+  // THEN it hard-fails and writes nothing — resolving redact.js by walking from PATH must verify
+  //      the package identity before trusting the module it finds there
+  withInbox((inbox, root) => {
+    const fakePkg = mkdtempSync(join(tmpdir(), 'inbox-fakepkg-'));
+    mkdirSync(join(fakePkg, 'bin'));
+    mkdirSync(join(fakePkg, 'src'));
+    writeFileSync(join(fakePkg, 'package.json'), JSON.stringify({ name: 'not-consultum' }));
+    writeFileSync(join(fakePkg, 'bin', 'consultum.js'), '#!/usr/bin/env node\n');
+    writeFileSync(
+      join(fakePkg, 'src', 'redact.js'),
+      'export function redactSecrets(s) { return s; }\n', // a working redactor — identity is the gate, not functionality
+    );
+    const fakeBinDir = mkdtempSync(join(tmpdir(), 'inbox-fakebin-'));
+    symlinkSync(join(fakePkg, 'bin', 'consultum.js'), join(fakeBinDir, 'consultum'));
+    // withInbox's own `inbox` helper builds its own PATH (pointing at the real consultum); call
+    // bash directly so PATH resolves only to our fake, mis-identified package.
+    try {
+      assert.throws(() => execFileSync('bash', [SCRIPT, 'ask'], {
+        encoding: 'utf8',
+        env: { PATH: `${fakeBinDir}:${BASE_PATH}`, HOME: process.env.HOME, CONSULTUM_INBOX: root },
+        input: 'q\n',
+      }));
+      assert.ok(!existsSync(join(root, 'open')), 'open/ must not exist when package identity fails');
+    } finally {
+      rmSync(fakePkg, { recursive: true, force: true });
+      rmSync(fakeBinDir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('B3: a chmod failure on the inbox root refuses to publish, not silently ignored', {
+  skip: process.platform !== 'darwin' ? 'requires macOS chflags to force a chmod failure' : false,
+}, () => {
+  // GIVEN an inbox root marked immutable (chflags uchg) so `chmod 700` on it fails, while writes
+  //       inside its already-writable open/ subdirectory still succeed — isolating the chmod
+  //       failure from every other side effect `ask` performs
+  // WHEN ask is called
+  // THEN it exits non-zero and publishes no question directory — the chmod failure must not be
+  //      swallowed with `|| true`
+  withInbox((inbox, root) => {
+    mkdirSync(join(root, 'open'), { recursive: true });
+    // mkdtempSync already creates `root` at mode 0700 — chmod 700 on an unchanged mode is a
+    // macOS no-op that doesn't trip the immutable-flag check at all. Force a real mode change
+    // (755) first so the forthcoming `chmod 700` genuinely has to write, and uchg can block it.
+    execFileSync('chmod', ['755', root]);
+    execFileSync('chflags', ['uchg', root]);
+    try {
+      assert.throws(() => inbox(['ask', '--slug', 'b3'], { input: 'q\n' }));
+      const entries = existsSync(join(root, 'open')) ? readdirSync(join(root, 'open')) : [];
+      assert.deepEqual(entries, [], 'no question directory may be published when chmod fails');
+    } finally {
+      execFileSync('chflags', ['nouchg', root]);
+    }
+  });
 });
 
 test('a forged answered flag in meta.json does not fool check', { skip }, () => {
@@ -246,6 +345,21 @@ test('prune never touches open/, even when questions are old', { skip }, () => {
   });
 });
 
+test('prune --days 7 leaves a recently-closed record untouched', { skip }, () => {
+  // GIVEN a closed question that was just closed (age ~0)
+  // WHEN prune --days 7 runs
+  // THEN it is NOT deleted — an implementation that deletes every closed record regardless of
+  //      age would wrongly pass a --days 0 test but must fail this one
+  withInbox((inbox, root) => {
+    const closedId = inbox(['ask'], { input: 'gets closed\n' });
+    inbox(['answer', closedId], { input: 'ok\n' });
+    inbox(['close', closedId]);
+    const out = inbox(['prune', '--days', '7']);
+    assert.match(out, /pruned 0/);
+    assert.ok(existsSync(join(root, 'closed', closedId, 'question.md')), 'recent closed question must survive prune --days 7');
+  });
+});
+
 test('root prints the default absolute path and creates nothing', { skip }, () => {
   // GIVEN CONSULTUM_INBOX is unset
   // WHEN `root` is called
@@ -270,4 +384,36 @@ test('root prints exactly CONSULTUM_INBOX when set', { skip }, () => {
   }).trim();
   assert.equal(out, custom);
   assert.ok(!existsSync(custom));
+});
+
+test('watch does not emit the body of a sensitive question', { skip }, async () => {
+  // GIVEN a sensitive question already on disk before watch starts
+  // WHEN watch runs briefly and is then killed
+  // THEN its ask-line for that id appears (proving watch actually saw it) but never contains the
+  //      question body — only an opaque marker
+  const root = mkdtempSync(join(tmpdir(), 'inbox-root-'));
+  const binDir = mkdtempSync(join(tmpdir(), 'inbox-bin-'));
+  symlinkSync(join(REPO_ROOT, 'bin', 'consultum.js'), join(binDir, 'consultum'));
+  const env = { PATH: `${binDir}:${BASE_PATH}`, HOME: process.env.HOME, CONSULTUM_INBOX: root };
+  let child;
+  try {
+    const id = execFileSync('bash', [SCRIPT, 'ask', '--sensitive'], {
+      encoding: 'utf8', env, input: 'SECRET_BODY_MARKER_XYZ\n',
+    }).trim();
+
+    child = spawn('bash', [SCRIPT, 'watch'], { env });
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk.toString(); });
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    child.kill('SIGKILL');
+    child = null;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    assert.match(out, new RegExp(`INBOX\\[ask\\] ${id}`), 'watch must have observed the sensitive ask');
+    assert.doesNotMatch(out, /SECRET_BODY_MARKER_XYZ/);
+  } finally {
+    if (child) child.kill('SIGKILL');
+    rmSync(root, { recursive: true, force: true });
+    rmSync(binDir, { recursive: true, force: true });
+  }
 });
