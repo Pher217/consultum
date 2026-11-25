@@ -54,7 +54,7 @@ See [`config.example.yaml`](../config.example.yaml) for the full, runnable schem
 
 ```yaml
 models:
-  claude:  { provider: anthropic-cli, id: claude-opus-4-8, trust: trusted }
+  claude:  { provider: anthropic-cli, id: claude-opus-5-5, trust: trusted }
   gpt:   { provider: openai,        id: gpt-4o,          trust: untrusted }
   local: { provider: ollama,        id: gemma3:27b,      trust: local }
 

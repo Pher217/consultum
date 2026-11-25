@@ -40,7 +40,7 @@ Point a model at it:
 models:
   claude:
     provider: anthropic-cli
-    id: claude-opus-4-8
+    id: claude-opus-5-5
     trust: trusted
     token_file: /home/user/.config/consultum/claude-token   # note: ~ is not expanded — use an absolute or config-relative path
     # token_env: CLAUDE_CODE_OAUTH_TOKEN        # override the var name if your file holds an API key
