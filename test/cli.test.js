@@ -302,7 +302,7 @@ test('ollamaStatus: a :cloud tag is ok-unverified even when absent from the loca
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ models: [{ name: 'llama3.1:8b' }] }) });
   try {
-    const s = await ollamaStatus('http://localhost:11434', 'glm-5.2:cloud');
+    const s = await ollamaStatus('http://localhost:11434', 'glm-5.3:cloud');
     assert.equal(s.status, 'ok-unverified');
   } finally {
     globalThis.fetch = realFetch;
@@ -353,7 +353,7 @@ test('pickOllamaTag picks the largest non-cloud, non-embedding tag', async () =>
     json: async () => ({
       models: [
         { name: 'bge-m3:latest', size: 500 },
-        { name: 'glm-5.2:cloud', size: 900 },
+        { name: 'glm-5.3:cloud', size: 900 },
         { name: 'gemma3:4b', size: 3000 },
         { name: 'gemma4:31b-mlx', size: 18000 },
         { name: 'nomic-embed-text:latest', size: 400 },
@@ -635,12 +635,20 @@ test('runInit --sandbox --print includes the config-outside-workspace guidance p
 test('generateStarterConfig builds an ordered advisor chain from detected providers', () => {
   // GIVEN codex is detected WITH a known model id (from ~/.codex/config.toml), WHEN scaffolding,
   // THEN codex is an active advisor using that id.
-  const all = generateStarterConfig({ claude: true, codex: true, codexModel: 'gpt-5.6-sol', ollama: true });
+  const all = generateStarterConfig({ claude: true, codex: true, codexModel: 'gpt-6.2-sol', ollama: true });
   assert.match(all, /advisor: \[claude, codex\]/);
-  assert.match(all, /id: gpt-5\.6-sol/);
+  assert.match(all, /id: gpt-6\.2-sol/);
   assert.match(all, /provider: anthropic-cli/);
   const none = generateStarterConfig({ claude: false, codex: false, ollama: false });
   assert.match(none, /advisor: \[local\]/);
+});
+
+test('generateStarterConfig scaffolds the current Claude id, not the retired one', () => {
+  // GIVEN claude is detected, WHEN scaffolding, THEN the claude entry uses claude-opus-5-5
+  // and never the retired claude-opus-4-8.
+  const cfg = generateStarterConfig({ claude: true, codex: false, ollama: false });
+  assert.match(cfg, /id: claude-opus-5-5,/);
+  assert.doesNotMatch(cfg, /claude-opus-4-8/);
 });
 
 test('generateStarterConfig comments codex OUT when no account model id is known (never scaffolds a broken default)', () => {
@@ -755,7 +763,7 @@ test('runInitInteractive writes a config that actually parses', async () => {
 
 test('runInitInteractive honours default_sensitive and an invalid trust falls back safely', async () => {
   const written = {};
-  const { ask } = scriptedAsk(['', 'claude-opus-4-8', 'nonsense-trust', 'n', 'n', '', 'y']);
+  const { ask } = scriptedAsk(['', 'claude-opus-5-5', 'nonsense-trust', 'n', 'n', '', 'y']);
   await runInitInteractive({
     flags: { config: '/tmp/consultum-wizard-test2.yaml' },
     out: sink().fn,

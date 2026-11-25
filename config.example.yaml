@@ -1,7 +1,7 @@
 # consultum — minimal working config. Secrets live in env vars, never here.
 # trust: local | trusted | untrusted   (a sensitive request uses trusted/local only)
 models:
-  claude:  { provider: anthropic-cli, id: claude-opus-4-8, trust: trusted }   # subscription token or ANTHROPIC_API_KEY
+  claude:  { provider: anthropic-cli, id: claude-opus-5-5, trust: trusted }   # subscription token or ANTHROPIC_API_KEY
   gpt:   { provider: openai,        id: gpt-4o,          trust: untrusted } # request-shaped; OPENAI_API_KEY
   local: { provider: ollama,        id: gemma3:27b,      trust: local }     # localhost, no key
 roles:

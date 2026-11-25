@@ -319,10 +319,10 @@ test('bare invocation (no command) exits 10', (t) => {
 test('installed config.example.yaml has the correct advisor model id, not the mangled one', (t) => {
   if (skipReason) return t.skip(skipReason);
   // GIVEN the INSTALLED package's config.example.yaml WHEN read from node_modules THEN it contains
-  // the correct `claude-opus-4-8` id and never the doubled `claude-claude-4-8` regression.
+  // the correct `claude-opus-5-5` id and never the doubled `claude-claude-4-8` regression.
   const examplePath = path.join(pkgRoot, 'config.example.yaml');
   const content = fs.readFileSync(examplePath, 'utf8');
-  assert.match(content, /claude-opus-4-8/);
+  assert.match(content, /claude-opus-5-5/);
   assert.doesNotMatch(content, /claude-claude-4-8/);
 });
 

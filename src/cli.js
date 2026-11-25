@@ -436,7 +436,7 @@ export async function runInitInteractive({ flags, out, err, detect = defaultDete
     advisor.push(key);
   };
 
-  if (detected.claude) await addModel('claude', 'Claude Code CLI', 'anthropic-cli', 'claude-opus-4-8', 'trusted', 'uses the CLI login');
+  if (detected.claude) await addModel('claude', 'Claude Code CLI', 'anthropic-cli', 'claude-opus-5-5', 'trusted', 'uses the CLI login');
   // Codex id is account-tier-specific (`gpt-5-codex`/`gpt-5` are rejected on ChatGPT accounts), so
   // there is no safe literal to default to. Offer the model from ~/.codex/config.toml if we found one;
   // otherwise addModel prompts for a required id (blank skips) rather than writing a broken default.
@@ -521,7 +521,7 @@ export function generateStarterConfig(detected, { sandbox = false } = {}) {
   const models = [];
   const advisor = [];
   if (detected.claude) {
-    models.push('  claude: { provider: anthropic-cli, id: claude-opus-4-8, trust: trusted }   # uses the Claude Code login, or ANTHROPIC_API_KEY');
+    models.push('  claude: { provider: anthropic-cli, id: claude-opus-5-5, trust: trusted }   # uses the Claude Code login, or ANTHROPIC_API_KEY');
     advisor.push('claude');
   }
   if (detected.codex) {
@@ -572,7 +572,7 @@ function sandboxStarterConfig() {
     '# Keys come from env vars (or api_key_file). Keep THIS FILE outside any worker-writable dir',
     '# and point CONSULTUM_CONFIG at it (threat-model A7). trust: local | trusted | untrusted.',
     'models:',
-    '  claude: { provider: anthropic-api, id: claude-opus-4-8, trust: trusted,   api_key_env: ANTHROPIC_API_KEY }  # api.anthropic.com',
+    '  claude: { provider: anthropic-api, id: claude-opus-5-5, trust: trusted,   api_key_env: ANTHROPIC_API_KEY }  # api.anthropic.com',
     '  gpt:    { provider: openai,        id: gpt-4o,          trust: untrusted, api_key_env: OPENAI_API_KEY }      # api.openai.com',
     '  # local: { provider: ollama, id: gemma3:27b, trust: local }   # only if localhost egress is allowed',
     'roles:',

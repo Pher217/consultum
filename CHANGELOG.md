@@ -5,6 +5,9 @@ All notable changes to consultum are documented here. Format loosely follows
 
 ## Unreleased
 
+### Changed
+- Starter configs, `config.example.yaml` and docs now use `claude-opus-5-5` (was the retired `claude-opus-4-8`).
+
 ### Added
 - `docs/paired-sessions.md` — an **experimental** companion pattern: a file-based mailbox between
   two *long-running* interactive sessions (e.g. an OpenHands worker and an advisor chat), where
