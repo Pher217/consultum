@@ -384,12 +384,12 @@ cmd_prune() {
   fi
   # Manual mtime comparison, not `find -mtime +N` — find's +N means "more than N whole days ago"
   # and truncates, so `--days 0` (prune everything closed, right now) would match nothing for a
-  # dir that is only seconds old. Mirrors pair.sh's btime probe: macOS stat first, then Linux.
+  # dir that is only seconds old. GNU stat first (on GNU, `stat -f` is filesystem status and prints garbage), then BSD `stat -f %m`.
   local cutoff n=0 d mtime
   cutoff=$(( $(date +%s) - days * 86400 ))
   for d in "$ROOT"/closed/*/; do
     [ -d "$d" ] || continue
-    mtime="$(stat -f %m "$d" 2>/dev/null || stat -c %Y "$d" 2>/dev/null || echo 0)"
+    mtime="$(stat -c %Y "$d" 2>/dev/null || stat -f %m "$d" 2>/dev/null || echo 0)"
     if [ "$mtime" -le "$cutoff" ]; then
       rm -rf "$d"
       n=$((n + 1))
